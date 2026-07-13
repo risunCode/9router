@@ -159,7 +159,6 @@ export async function GET(request, { params }) {
         "codebuddy-cn",
         "qoder",
         "grok-cli",
-        "cursor-cli",
       ];
       let deviceData;
       if (noPkceDeviceProviders.includes(provider)) {
@@ -273,14 +272,50 @@ export async function POST(request, { params }) {
     }
 
     if (action === "poll") {
-      const { deviceCode, codeVerifier, extraData } = body;
+      const { deviceCode, codeVerifier, extraData, uuid } = body;
 
+      // ── Cursor CLI custom polling flow ──────────────────────────
+      if (provider === "cursor-cli") {
+        if (!uuid || !codeVerifier) {
+          return NextResponse.json({ error: "Missing uuid or codeVerifier" }, { status: 400 });
+        }
+        const providerData = getProvider("cursor-cli");
+        const pollResult = await providerData.pollToken(providerData.config, uuid, codeVerifier);
+        if (!pollResult.ok) {
+          const err = pollResult.data?.error;
+          if (err === "authorization_pending") {
+            return NextResponse.json({ status: "pending" });
+          }
+          return NextResponse.json({ error: pollResult.data?.error_description || err || "Authorization failed" }, { status: 400 });
+        }
+        const tokens = providerData.mapTokens(pollResult.data);
+        const connection = await createProviderConnection({
+          provider: "cursor-cli",
+          authType: "oauth",
+          ...tokens,
+          expiresAt: tokens.expiresIn
+            ? new Date(Date.now() + tokens.expiresIn * 1000).toISOString()
+            : null,
+          testStatus: "active",
+        });
+        return NextResponse.json({
+          success: true,
+          connection: {
+            id: connection.id,
+            provider: connection.provider,
+            email: connection.email,
+            displayName: connection.displayName,
+          },
+        });
+      }
+
+      // ── Standard device_code polling ─────────────────────────────
       if (!deviceCode) {
         return NextResponse.json({ error: "Missing device code" }, { status: 400 });
       }
 
       // Providers that don't use PKCE for device code
-      const noPkceProviders = ["github", "kimi-coding", "kilocode", "codebuddy-cn", "cursor-cli"];
+      const noPkceProviders = ["github", "kimi-coding", "kilocode", "codebuddy-cn"];
       let result;
       if (noPkceProviders.includes(provider)) {
         result = await pollForToken(provider, deviceCode);

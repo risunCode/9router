@@ -150,11 +150,78 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
     setPolling(false);
   }, [provider, onSuccess]);
 
+  // ── Cursor CLI polling ───────────────────────────────────────────────
+  const startCursorCliPolling = useCallback(async (uuid, verifier) => {
+    pollingAbortRef.current = false;
+    setPolling(true);
+    const deadline = Date.now() + 300_000; // 5 min
+    let interval = 2;
+
+    while (Date.now() < deadline) {
+      if (pollingAbortRef.current) { setPolling(false); return; }
+      await new Promise((r) => setTimeout(r, interval * 1000));
+      if (pollingAbortRef.current) { setPolling(false); return; }
+
+      try {
+        const res = await fetch(`/api/oauth/cursor-cli/poll`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ uuid, codeVerifier: verifier }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          pollingAbortRef.current = true;
+          setStep("success");
+          setPolling(false);
+          onSuccess?.();
+          return;
+        }
+        if (data.status === "pending") continue;
+        if (data.error && data.error !== "authorization_pending") {
+          throw new Error(data.error);
+        }
+      } catch (err) {
+        setError(err.message);
+        setStep("error");
+        setPolling(false);
+        return;
+      }
+    }
+    setError("Authorization timeout");
+    setStep("error");
+    setPolling(false);
+  }, [provider, onSuccess]);
+
   // Start OAuth flow
   const startOAuthFlow = useCallback(async () => {
     if (!provider) return;
     try {
       setError(null);
+
+      // ── Cursor CLI polling flow ──────────────────────────────────────
+      if (provider === "cursor-cli") {
+        setIsDeviceCode(true);
+        setStep("waiting");
+
+        // Get the auth URL + PKCE verifier
+        const authorizeUrl = new URL(`/api/oauth/cursor-cli/authorize`, window.location.origin);
+        authorizeUrl.searchParams.set("redirect_uri", "http://localhost");
+        const res = await fetch(authorizeUrl.toString());
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+
+        // Extract UUID from the auth URL (cursor.com/loginDeepControl?challenge=...&uuid=...)
+        const loginUrl = new URL(data.authUrl);
+        const uuid = loginUrl.searchParams.get("uuid");
+        if (!uuid) throw new Error("No UUID in Cursor CLI auth URL");
+
+        // Open login page in browser
+        window.open(data.authUrl, "_blank", "noopener,noreferrer");
+
+        // Poll using the Cursor CLI polling endpoint
+        startCursorCliPolling(uuid, data.codeVerifier);
+        return;
+      }
 
       // Device code flow providers (must match oauth providers with flowType: "device_code")
       const deviceCodeProviders = [
@@ -166,7 +233,6 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         "codebuddy-cn",
         "qoder",
         "grok-cli",
-        "cursor-cli",
       ];
       if (deviceCodeProviders.includes(provider)) {
         setIsDeviceCode(true);

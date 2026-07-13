@@ -1074,63 +1074,50 @@ const PROVIDERS = {
 
   "cursor-cli": {
     config: CURSOR_CLI_CONFIG,
-    flowType: "device_code",
-    /**
-     * Cursor CLI doesn't use a real device code. We encode the PKCE verifier
-     * and poll UUID into a synthetic "device code" so the existing dashboard
-     * polling UI works without changes. The "verification URI" is the
-     * cursor.com login deep-link.
-     */
-    requestDeviceCode: async (config) => {
-      const { verifier: pkceVerifier, challenge: pkceChallenge } = generatePKCE();
+    flowType: "cursor_cli_polling",
+    buildAuthUrl: (config, redirectUri, state, codeChallenge) => {
       const uuid = crypto.randomUUID();
       const params = new URLSearchParams({
-        challenge: pkceChallenge,
+        challenge: codeChallenge,
         uuid,
         mode: "login",
         redirectTarget: "cli",
       });
-      const loginUrl = `${config.loginUrl}?${params.toString()}`;
-      return {
-        device_code: `${uuid}::${pkceVerifier}`,
-        user_code: uuid.slice(0, 8),
-        verification_uri: loginUrl,
-        verification_uri_complete: loginUrl,
-        expires_in: 600,
-        interval: 2,
-      };
+      return `${config.loginUrl}?${params.toString()}`;
     },
-    pollToken: async (config, deviceCode) => {
-      const sep = deviceCode.indexOf("::");
-      if (sep < 0) {
-        return { ok: false, data: { error: "invalid_device_code" } };
-      }
-      const uuid = deviceCode.slice(0, sep);
-      const verifier = deviceCode.slice(sep + 2);
-      const res = await fetch(`${config.pollUrl}?uuid=${encodeURIComponent(uuid)}&verifier=${encodeURIComponent(verifier)}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.accessToken) {
-          return {
-            ok: true,
-            data: {
-              access_token: data.accessToken,
-              refresh_token: data.refreshToken || null,
-            },
-          };
+    /**
+     * Poll Cursor CLI auth. Called directly by the route handler when
+     * the frontend POSTs to /api/oauth/cursor-cli/poll with { uuid, verifier }.
+     */
+    pollToken: async (config, uuid, verifier) => {
+      let delay = 1000;
+      for (let attempt = 0; attempt < 150; attempt++) {
+        await new Promise((r) => setTimeout(r, delay));
+        try {
+          const res = await fetch(`${config.pollUrl}?uuid=${encodeURIComponent(uuid)}&verifier=${encodeURIComponent(verifier)}`);
+          if (res.status === 404) {
+            delay = Math.min(delay * 1.2, 10000);
+            continue;
+          }
+          if (res.ok) {
+            const data = await res.json();
+            if (data.accessToken) {
+              return {
+                ok: true,
+                data: {
+                  access_token: data.accessToken,
+                  refresh_token: data.refreshToken || null,
+                },
+              };
+            }
+            return { ok: false, data: { error: "authorization_pending" } };
+          }
+          throw new Error(`Cursor CLI poll returned HTTP ${res.status}`);
+        } catch (e) {
+          if (e.message?.startsWith("Cursor CLI poll returned")) throw e;
         }
-        return { ok: false, data: { error: "authorization_pending" } };
       }
-      if (res.status === 404) {
-        return { ok: false, data: { error: "authorization_pending" } };
-      }
-      return {
-        ok: false,
-        data: {
-          error: "access_denied",
-          error_description: `Cursor CLI poll returned HTTP ${res.status}`,
-        },
-      };
+      throw new Error("Cursor CLI authentication timeout");
     },
     mapTokens: (tokens) => ({
       accessToken: tokens.access_token,
@@ -1611,6 +1598,9 @@ export async function generateAuthData(providerName, redirectUri, meta) {
   if (provider.flowType === "device_code") {
     // Device code flow doesn't have auth URL upfront
     authUrl = null;
+  } else if (provider.flowType === "cursor_cli_polling") {
+    // Cursor CLI polling: auth URL + PKCE verifier needed for poll
+    authUrl = provider.buildAuthUrl(config, redirectUri, state, codeChallenge, meta || {});
   } else if (provider.flowType === "authorization_code_pkce") {
     authUrl = provider.buildAuthUrl(config, redirectUri, state, codeChallenge, meta || {});
   } else {
