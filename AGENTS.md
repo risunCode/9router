@@ -66,6 +66,18 @@ Devin tool calls are provider-native streamed deltas. 9router's job is to transl
 - Reject only a brand-new tool call that has neither a known/active ID nor a non-empty function name. Do not forward `function.name: ""` for a new OpenAI tool call.
 - A client-side tool executor is responsible for applying streamed tool calls to a workspace. The hosted 9router API only emits the tool call stream.
 
+### Vision boundary
+
+Devin registry metadata may advertise vision support for client capability discovery, but current hosted testing established a practical upstream boundary: `devin/swe-1-6-slow` accepts image payloads through 9router without throwing `Unsupported or unsafe Devin image input`, yet the Devin/SWE runtime does not appear to read the attached `ChatMessagePrompt.images` content. Do not keep chasing this as a 9router translator bug unless a verified Codeium/Devin direct-API request proves the same model can actually see images.
+
+Confirmed payload behavior:
+
+- OpenAI/Codex chat-completions shape (`type: "image_url"` with `data:image/png;base64,...`) is accepted by 9router.
+- OMP internal direct shape (`type: "image"`, `mimeType`, `data`) is accepted by 9router.
+- Invalid/unsafe image inputs are client errors (`400`) and must not trigger Devin account fallback or locks.
+- `kimchi/minimax-m3` successfully OCR'd the same screenshot via base64 data URI (`/completions`), proving the image payload and hosted route are valid.
+- Devin responded as if no image was attached for that same payload; treat this as an upstream/model capability boundary until proven otherwise.
+
 ### Reference implementation boundaries
 
 Use `DevinRouter/z-references/oh-my-pi-main/packages/ai/src/providers/devin.ts` as the closest direct API contract for Devin streaming, prompt replay, and tool-call delta accumulation. Do **not** copy OmniRoute's Devin CLI/ACP subprocess path: `devin acp` summarizer mode is pure-text and intentionally does not represent the 9router Devin integration.
