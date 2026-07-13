@@ -1,5 +1,8 @@
 # 9router Customization Guide
 
+## Multi Brain startup
+Before meaningful work, read `.multibrain/session.md`, then selectively open the relevant bucket under `.multibrain/indexes/`. After material provider work, append a concise index entry and place detailed handoff notes under `.multibrain/context/`.
+
 This fork tracks `decolua/9router` while carrying local provider integrations. Keep this document current whenever a custom provider, dependency, test contract, or upstream merge rule changes.
 
 ## Repository topology

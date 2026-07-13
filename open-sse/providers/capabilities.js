@@ -97,6 +97,10 @@ export const MODEL_CAPABILITIES = {
   "vision-model":      { vision: true, reasoning: true, thinkingFormat: "qwen", contextWindow: 1000000 },
   "coder-model":       { reasoning: true, thinkingFormat: "qwen", contextWindow: 1000000 },
   "swe-1-6-slow":      { vision: true, reasoning: true, tools: true, contextWindow: 200000, maxOutput: 64000 },
+
+  // Cursor CLI Agent models — Agent API supports reasoning on most models
+  "composer-2.5":      { vision: true, reasoning: true, tools: true, contextWindow: 200000, maxOutput: 64000 },
+  "composer-2":        { vision: true, reasoning: true, tools: true, contextWindow: 200000, maxOutput: 64000 },
 };
 
 /**
