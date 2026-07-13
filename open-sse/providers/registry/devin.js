@@ -51,6 +51,13 @@ export default {
     {
       id: "swe-1-6-slow",
       name: "SWE-1.6 Slow",
+      capabilities: {
+        vision: true,
+        reasoning: true,
+        tools: true,
+        contextWindow: 200000,
+        maxOutput: 64000,
+      },
       contextWindow: 200000,
       maxOutput: 64000,
     },

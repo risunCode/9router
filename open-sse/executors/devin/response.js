@@ -9,12 +9,16 @@ const sse = (payload) => encoder.encode(`data: ${payload}\n\n`);
 
 function toOpenAiToolCall(call, toolIndexes, nextToolIndexRef) {
   const name = call.name?.trim?.() ?? "";
-  if (!name) {
+  const isKnownToolCall = call.id && toolIndexes.has(call.id);
+  if (!isKnownToolCall && !name) {
     const details = call.invalidJsonErr || call.invalidJsonStr || "missing function name";
     throw new Error(`Invalid Devin tool call: ${sanitizeDevinErrorMessage(details)}`);
   }
   if (!toolIndexes.has(call.id)) toolIndexes.set(call.id, nextToolIndexRef.value++);
-  return { index: toolIndexes.get(call.id), id: call.id, type: "function", function: { name, arguments: call.argumentsJson || "{}" } };
+  const fn = {};
+  if (name) fn.name = name;
+  if (call.argumentsJson) fn.arguments = call.argumentsJson;
+  return { index: toolIndexes.get(call.id), id: call.id, type: "function", function: fn };
 }
 
 function trailerFailure(payload) {

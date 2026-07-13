@@ -24,6 +24,14 @@ import {
 
 const CORS_HEADERS = { "Access-Control-Allow-Origin": "*" };
 
+function applyStaticModelMetadata(entry, staticModel) {
+  if (staticModel?.name) entry.name = staticModel.name;
+  if (staticModel?.capabilities) entry.capabilities = staticModel.capabilities;
+  if (staticModel?.contextWindow) entry.contextWindow = staticModel.contextWindow;
+  if (staticModel?.maxOutput) entry.maxOutput = staticModel.maxOutput;
+  return entry;
+}
+
 export async function resolveModelsApiKeyPolicy(request) {
   if (!request) return { policy: null };
 
@@ -301,11 +309,11 @@ export async function buildModelsList(kindFilter) {
       for (const model of providerModels) {
         if (!kindFilter.includes(modelKind(model))) continue;
         if (isDisabled(alias, model.id)) continue;
-        models.push({
+        models.push(applyStaticModelMetadata({
           id: `${alias}/${model.id}`,
           object: "model",
           owned_by: alias,
-        });
+        }, model));
       }
     }
 
@@ -456,13 +464,18 @@ export async function buildModelsList(kindFilter) {
         if (!kindFilter.includes(kind) && !allowAsLlm) continue;
         if (isDisabled(outputAlias, modelId) || isDisabled(staticAlias, modelId)) continue;
 
+        const staticModel = providerModels.find((m) => m.id === modelId);
         const model = {
           id: `${outputAlias}/${modelId}`,
           object: "model",
           owned_by: outputAlias,
         };
         const caps = liveCapabilitiesById.get(modelId) || capabilitiesFromServiceKind(customKind || liveKind);
-        if (caps) model.capabilities = caps;
+        if (caps) {
+          model.capabilities = caps;
+        } else if (staticModel) {
+          applyStaticModelMetadata(model, staticModel);
+        }
         models.push(model);
       }
 
