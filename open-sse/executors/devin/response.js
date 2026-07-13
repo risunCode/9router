@@ -7,18 +7,26 @@ import { sanitizeDevinErrorMessage, toDevinFallbackError } from "./errors.js";
 const encoder = new TextEncoder();
 const sse = (payload) => encoder.encode(`data: ${payload}\n\n`);
 
-function toOpenAiToolCall(call, toolIndexes, nextToolIndexRef) {
+function toOpenAiToolCall(call, toolIndexes, toolPartialJson, nextToolIndexRef, activeToolCallRef) {
   const name = call.name?.trim?.() ?? "";
-  const isKnownToolCall = call.id && toolIndexes.has(call.id);
+  const toolCallId = call.id || activeToolCallRef.value;
+  const isKnownToolCall = toolCallId && toolIndexes.has(toolCallId);
   if (!isKnownToolCall && !name) {
     const details = call.invalidJsonErr || call.invalidJsonStr || "missing function name";
     throw new Error(`Invalid Devin tool call: ${sanitizeDevinErrorMessage(details)}`);
   }
-  if (!toolIndexes.has(call.id)) toolIndexes.set(call.id, nextToolIndexRef.value++);
+  const resolvedId = toolCallId || `call_${crypto.randomUUID().replaceAll("-", "")}`;
+  if (!toolIndexes.has(resolvedId)) toolIndexes.set(resolvedId, nextToolIndexRef.value++);
+  activeToolCallRef.value = resolvedId;
   const fn = {};
   if (name) fn.name = name;
-  if (call.argumentsJson) fn.arguments = call.argumentsJson;
-  return { index: toolIndexes.get(call.id), id: call.id, type: "function", function: fn };
+  if (call.argumentsJson) {
+    const previousJson = toolPartialJson.get(resolvedId) ?? "";
+    const accumulatedJson = call.argumentsJson.startsWith(previousJson) ? call.argumentsJson : previousJson + call.argumentsJson;
+    toolPartialJson.set(resolvedId, accumulatedJson);
+    fn.arguments = accumulatedJson.slice(previousJson.length);
+  }
+  return { index: toolIndexes.get(resolvedId), id: resolvedId, type: "function", function: fn };
 }
 
 function trailerFailure(payload) {
@@ -104,7 +112,9 @@ export async function probeDevinPreOutput(response) {
 export function createDevinSseResponse(response, model) {
   const decoder = new ConnectFrameDecoder();
   const toolIndexes = new Map();
+  const toolPartialJson = new Map();
   const nextToolIndexRef = { value: 0 };
+  const activeToolCallRef = { value: "" };
   let latestStopReason = StopReason.UNSPECIFIED;
   let valuableOutput = false;
   const stream = new ReadableStream({
@@ -130,7 +140,7 @@ export function createDevinSseResponse(response, model) {
             if (message.deltaThinking) { delta.reasoning_content = message.deltaThinking; valuableOutput = true; }
             if (message.deltaToolCalls?.length) {
               try {
-                delta.tool_calls = message.deltaToolCalls.map((call) => toOpenAiToolCall(call, toolIndexes, nextToolIndexRef));
+                delta.tool_calls = message.deltaToolCalls.map((call) => toOpenAiToolCall(call, toolIndexes, toolPartialJson, nextToolIndexRef, activeToolCallRef));
                 valuableOutput = true;
               } catch (error) {
                 valuableOutput = true;

@@ -85,7 +85,7 @@ describe("Devin response adapter", () => {
       deltaToolCalls: [{ id: "call-1", name: "save_markdown", argumentsJson: "" }],
     });
     const second = create(GetChatMessageResponseSchema, {
-      deltaToolCalls: [{ id: "call-1", name: "", argumentsJson: "{\"filename\"" }],
+      deltaToolCalls: [{ id: "", name: "", argumentsJson: "{\"filename\"" }],
     });
     const upstream = new Response(Buffer.concat([
       encodeConnectFrame(toBinary(GetChatMessageResponseSchema, first)),
@@ -94,8 +94,28 @@ describe("Devin response adapter", () => {
     const response = createDevinSseResponse(upstream, DEVIN_MODEL_ID);
     const text = await response.text();
     expect(text).toContain('"name":"save_markdown"');
+    expect(text).toContain('"id":"call-1"');
     expect(text).toContain('"arguments":"{\\"filename\\""');
     expect(text).toContain('"finish_reason":"tool_calls"');
+    expect(text).not.toContain("Invalid Devin tool call");
+  });
+
+  it("deduplicates full accumulated argument deltas from Devin", async () => {
+    const first = create(GetChatMessageResponseSchema, {
+      deltaToolCalls: [{ id: "call-2", name: "save_markdown", argumentsJson: "{\"filename\"" }],
+    });
+    const second = create(GetChatMessageResponseSchema, {
+      deltaToolCalls: [{ id: "", name: "", argumentsJson: "{\"filename\":\"x.md\"}" }],
+    });
+    const upstream = new Response(Buffer.concat([
+      encodeConnectFrame(toBinary(GetChatMessageResponseSchema, first)),
+      encodeConnectFrame(toBinary(GetChatMessageResponseSchema, second)),
+    ]));
+    const response = createDevinSseResponse(upstream, DEVIN_MODEL_ID);
+    const text = await response.text();
+    expect(text).toContain('"arguments":"{\\"filename\\""');
+    expect(text).toContain('"arguments":":\\"x.md\\"}"');
+    expect(text).not.toContain('{\\"filename\\"{\\"filename\\"');
     expect(text).not.toContain("Invalid Devin tool call");
   });
 
