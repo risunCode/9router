@@ -5,7 +5,7 @@ import { GetUserJwtResponseSchema } from "../../open-sse/executors/devin/proto/e
 import { ChatMessageSource } from "../../open-sse/executors/devin/proto/exa/codeium_common_pb/codeium_common_pb.js";
 import { ConnectFrameDecoder, encodeConnectFrame, fetchDevinAuthMetadata, normalizeDevinSessionToken } from "../../open-sse/executors/devin/protocol.js";
 import { buildDevinRequest, DEVIN_MODEL_ID } from "../../open-sse/executors/devin/request.js";
-import { createDevinSseResponse } from "../../open-sse/executors/devin/response.js";
+import { createDevinSseResponse, probeDevinPreOutput } from "../../open-sse/executors/devin/response.js";
 
 describe("Devin protocol", () => {
   it("normalizes exactly one session prefix", () => {
@@ -54,6 +54,21 @@ describe("Devin request adapter", () => {
   });
 });
 
+describe("Devin pre-output probe", () => {
+  it("turns a pre-output rate-limit trailer into a retryable HTTP failure", async () => {
+    const trailer = encodeConnectFrame(Buffer.from(JSON.stringify({ error: { code: "resource_exhausted", message: "Reached message rate limit for this model. Please try again later." } })), { compressed: false, trailer: true });
+    const result = await probeDevinPreOutput(new Response(trailer));
+    expect(result.failure).toMatchObject({ status: 429, category: "temporary_account_limit", retryable: true });
+  });
+
+  it("replays a valuable data frame for normal SSE conversion", async () => {
+    const data = encodeConnectFrame(toBinary(GetChatMessageResponseSchema, create(GetChatMessageResponseSchema, { deltaText: "fast" })));
+    const result = await probeDevinPreOutput(new Response(data));
+    expect(result.failure).toBeUndefined();
+    expect(await createDevinSseResponse(result.response, DEVIN_MODEL_ID).text()).toContain("fast");
+  });
+});
+
 describe("Devin response adapter", () => {
   it("emits canonical text, reasoning, tools, usage, and DONE events", async () => {
     const message = create(GetChatMessageResponseSchema, { deltaText: "hi", deltaThinking: "hmm" });
@@ -62,6 +77,19 @@ describe("Devin response adapter", () => {
     const text = await response.text();
     expect(text).toContain('"content":"hi"');
     expect(text).toContain('"reasoning_content":"hmm"');
+    expect(text).toContain("[DONE]");
+  });
+
+  it("does not forward malformed tool calls with an empty function name", async () => {
+    const message = create(GetChatMessageResponseSchema, {
+      deltaToolCalls: [{ id: "call-empty", name: "", argumentsJson: "{}" }],
+    });
+    const upstream = new Response(encodeConnectFrame(toBinary(GetChatMessageResponseSchema, message)));
+    const response = createDevinSseResponse(upstream, DEVIN_MODEL_ID);
+    const text = await response.text();
+    expect(text).toContain("Invalid Devin tool call");
+    expect(text).toContain("upstream_error");
+    expect(text).not.toContain('"function":{"name":""');
     expect(text).toContain("[DONE]");
   });
 });

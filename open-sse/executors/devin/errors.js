@@ -329,19 +329,16 @@ function classifyInternal(input) {
     return DEVIN_ERROR_CATEGORIES.DEFINITIVE_QUOTA;
   }
 
-  // 5) Model capacity / overloaded wording (generic 429/5xx without
-  //    account-specific signal). Connect resource_exhausted falls here unless
-  //    quota+escalation text promoted it above.
-  if (combined && hasAnyPattern(combined, CAPACITY_PATTERNS)) return DEVIN_ERROR_CATEGORIES.MODEL_CAPACITY;
-
-  // 6) Explicit temporary account/message rate limit wording. The first hit
-  //    here is conservative: generic "rate limit" / "too many requests" text
-  //    is treated as per-account temporary limit (matches Devin's per-account
-  //    throttling model). Quota escalation above already promoted the
-  //    definitive case so this branch only catches the soft quota wording.
+  // 5) Explicit temporary account/message rate-limit wording wins over the
+  // generic "try again later" phrase that often appears in the same message.
   if (combined && hasAnyPattern(combined, TEMPORARY_LIMIT_PATTERNS)) {
     return DEVIN_ERROR_CATEGORIES.TEMPORARY_ACCOUNT_LIMIT;
   }
+
+  // 6) Model capacity / overloaded wording (generic 429/5xx without
+  // account-specific rate-limit evidence). Connect resource_exhausted falls
+  // here unless quota+escalation text promoted it above.
+  if (combined && hasAnyPattern(combined, CAPACITY_PATTERNS)) return DEVIN_ERROR_CATEGORIES.MODEL_CAPACITY;
 
   // 7) Bare 429/500 — generic 429 alone MUST NOT be classified as quota.
   if (status === 429) return DEVIN_ERROR_CATEGORIES.MODEL_CAPACITY;

@@ -25,13 +25,15 @@ describe("Devin provider integration", () => {
     await expect(executor.execute({ model: "unsupported", body: { messages: [{ role: "user", content: "hi" }] }, credentials: { apiKey: "fake" } })).rejects.toMatchObject({ clientError: true, retryable: false });
   });
 
-  it("marks a trailer failure after text as valuable output to prohibit replay", async () => {
+  it("ends a post-output trailer failure without replaying the request", async () => {
     const data = encodeConnectFrame(toBinary(GetChatMessageResponseSchema, create(GetChatMessageResponseSchema, { deltaText: "partial" })));
     const trailer = encodeConnectFrame(Buffer.from(JSON.stringify({ error: { code: "resource_exhausted", message: "rate limit" } })), { compressed: false, trailer: true });
     const response = createDevinSseResponse(new Response(Buffer.concat([data, trailer])), DEVIN_MODEL_ID);
     const reader = response.body.getReader();
     const first = await reader.read();
     expect(new TextDecoder().decode(first.value)).toContain("partial");
-    await expect(reader.read()).rejects.toMatchObject({ valuableOutput: true });
+    const terminal = await reader.read();
+    expect(new TextDecoder().decode(terminal.value)).toContain("upstream_error");
+    expect(await reader.read()).toMatchObject({ done: false });
   });
 });

@@ -7,6 +7,16 @@ import { sanitizeDevinErrorMessage, toDevinFallbackError } from "./errors.js";
 const encoder = new TextEncoder();
 const sse = (payload) => encoder.encode(`data: ${payload}\n\n`);
 
+function toOpenAiToolCall(call, toolIndexes, nextToolIndexRef) {
+  const name = call.name?.trim?.() ?? "";
+  if (!name) {
+    const details = call.invalidJsonErr || call.invalidJsonStr || "missing function name";
+    throw new Error(`Invalid Devin tool call: ${sanitizeDevinErrorMessage(details)}`);
+  }
+  if (!toolIndexes.has(call.id)) toolIndexes.set(call.id, nextToolIndexRef.value++);
+  return { index: toolIndexes.get(call.id), id: call.id, type: "function", function: { name, arguments: call.argumentsJson || "{}" } };
+}
+
 function trailerFailure(payload) {
   const text = payload.toString("utf8").trim();
   if (!text) return null;
@@ -19,10 +29,78 @@ function trailerFailure(payload) {
   }
 }
 
+function statusForFailure(failure) {
+  if (failure.clientError) return 400;
+  if (failure.category === "authentication") return 401;
+  if (failure.category === "temporary_account_limit" || failure.category === "definitive_quota") return 429;
+  return 502;
+}
+
+function hasValuableOutput(frame) {
+  if (frame.trailer) return false;
+  const message = fromBinary(GetChatMessageResponseSchema, frame.payload);
+  return Boolean(message.deltaText || message.deltaThinking || message.deltaToolCalls?.length);
+}
+
+function replayReader(chunks, reader) {
+  return new ReadableStream({
+    async start(controller) {
+      try {
+        for (const chunk of chunks) controller.enqueue(chunk);
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          controller.enqueue(value);
+        }
+        controller.close();
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      await reader.cancel(reason);
+    },
+  });
+}
+
+/**
+ * Reads only until the first complete Connect frame. A trailer error received
+ * before any delta is converted to an ordinary HTTP response so 9router's
+ * combo/account fallback can select another account. Successful bytes are
+ * replayed exactly once to the normal streaming decoder.
+ */
+export async function probeDevinPreOutput(response) {
+  const reader = response.body?.getReader();
+  if (!reader) return { response };
+  const decoder = new ConnectFrameDecoder();
+  const chunks = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (value) {
+      chunks.push(value);
+      const frames = decoder.push(value);
+      for (const frame of frames) {
+        if (frame.trailer) {
+          const failure = trailerFailure(frame.payload);
+          if (failure) {
+            await reader.cancel(failure).catch(() => {});
+            return { failure: { ...failure, status: statusForFailure(failure) } };
+          }
+          continue;
+        }
+        if (hasValuableOutput(frame)) {
+          return { response: new Response(replayReader(chunks, reader), { status: response.status, headers: response.headers }) };
+        }
+      }
+    }
+    if (done) return { response: new Response(replayReader(chunks, reader), { status: response.status, headers: response.headers }) };
+  }
+}
+
 export function createDevinSseResponse(response, model) {
   const decoder = new ConnectFrameDecoder();
   const toolIndexes = new Map();
-  let nextToolIndex = 0;
+  const nextToolIndexRef = { value: 0 };
   let latestStopReason = StopReason.UNSPECIFIED;
   let valuableOutput = false;
   const stream = new ReadableStream({
@@ -47,11 +125,13 @@ export function createDevinSseResponse(response, model) {
             if (message.deltaText) { delta.content = message.deltaText; valuableOutput = true; }
             if (message.deltaThinking) { delta.reasoning_content = message.deltaThinking; valuableOutput = true; }
             if (message.deltaToolCalls?.length) {
-              delta.tool_calls = message.deltaToolCalls.map((call) => {
-                if (!toolIndexes.has(call.id)) toolIndexes.set(call.id, nextToolIndex++);
+              try {
+                delta.tool_calls = message.deltaToolCalls.map((call) => toOpenAiToolCall(call, toolIndexes, nextToolIndexRef));
                 valuableOutput = true;
-                return { index: toolIndexes.get(call.id), id: call.id, type: "function", function: { name: call.name, arguments: call.argumentsJson } };
-              });
+              } catch (error) {
+                valuableOutput = true;
+                throw error;
+              }
             }
             if (Object.keys(delta).length) controller.enqueue(sse(JSON.stringify({ id: `chatcmpl-${crypto.randomUUID()}`, object: "chat.completion.chunk", model, choices: [{ index: 0, delta, finish_reason: null }] })));
             if (message.usage) {
@@ -70,6 +150,13 @@ export function createDevinSseResponse(response, model) {
         controller.close();
       } catch (error) {
         try { await reader.cancel(error); } catch {}
+        if (valuableOutput) {
+          const message = sanitizeDevinErrorMessage(error?.message) || "Devin stream failed";
+          controller.enqueue(sse(JSON.stringify({ error: { message, type: "upstream_error" } })));
+          controller.enqueue(sse("[DONE]"));
+          controller.close();
+          return;
+        }
         controller.error(error);
       }
     },

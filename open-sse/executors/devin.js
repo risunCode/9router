@@ -3,7 +3,7 @@ import { PROVIDERS } from "../config/providers.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { DEVIN_CHAT_PATH, fetchDevinAuthMetadata } from "./devin/protocol.js";
 import { buildDevinRequest, DEVIN_MODEL_ID } from "./devin/request.js";
-import { createDevinSseResponse } from "./devin/response.js";
+import { createDevinSseResponse, probeDevinPreOutput } from "./devin/response.js";
 import { sanitizeDevinErrorMessage, toDevinFallbackError } from "./devin/errors.js";
 
 function selectedToken(credentials) {
@@ -41,6 +41,16 @@ export class DevinExecutor extends BaseExecutor {
         transformedBody: built.request,
       };
     }
-    return { response: createDevinSseResponse(response, model), url, headers, transformedBody: built.request };
+    const probed = await probeDevinPreOutput(response);
+    if (probed.failure) {
+      const failure = probed.failure;
+      return {
+        response: new Response(JSON.stringify({ error: { message: failure.message || "Devin upstream error", type: failure.category, code: failure.category } }), { status: failure.status, headers: { "content-type": "application/json" } }),
+        url,
+        headers,
+        transformedBody: built.request,
+      };
+    }
+    return { response: createDevinSseResponse(probed.response, model), url, headers, transformedBody: built.request };
   }
 }
