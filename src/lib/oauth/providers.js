@@ -1091,11 +1091,14 @@ const PROVIDERS = {
      */
     pollToken: async (config, uuid, verifier) => {
       let delay = 1000;
+      let consecutiveErrors = 0;
       for (let attempt = 0; attempt < 150; attempt++) {
         await new Promise((r) => setTimeout(r, delay));
         try {
-          const res = await fetch(`${config.pollUrl}?uuid=${encodeURIComponent(uuid)}&verifier=${encodeURIComponent(verifier)}`);
-          if (res.status === 404) {
+          const res = await fetch(`${config.pollUrl}?uuid=${uuid}&verifier=${verifier}`);
+          // 404 = not yet authorized; 400 = also not yet in some cases
+          if (res.status === 404 || res.status === 400) {
+            consecutiveErrors = 0;
             delay = Math.min(delay * 1.2, 10000);
             continue;
           }
@@ -1112,9 +1115,20 @@ const PROVIDERS = {
             }
             return { ok: false, data: { error: "authorization_pending" } };
           }
+          if (res.status >= 500) {
+            consecutiveErrors++;
+            if (consecutiveErrors >= 5) {
+              throw new Error(`Cursor CLI poll returned HTTP ${res.status} after ${consecutiveErrors} attempts`);
+            }
+            delay = Math.min(delay * 2, 30000);
+            continue;
+          }
           throw new Error(`Cursor CLI poll returned HTTP ${res.status}`);
         } catch (e) {
           if (e.message?.startsWith("Cursor CLI poll returned")) throw e;
+          consecutiveErrors++;
+          if (consecutiveErrors >= 5) throw e;
+          delay = Math.min(delay * 2, 30000);
         }
       }
       throw new Error("Cursor CLI authentication timeout");
