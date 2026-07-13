@@ -40,15 +40,9 @@ export default {
     clientVersion: "cli-2026.01.09-231024f",
   },
   models: [
-    { id: "default", name: "Auto (Server Picks)" },
+    { id: "auto", name: "Auto (Server Picks)" },
     { id: "composer-2.5", name: "Composer 2.5" },
-    { id: "composer-2", name: "Composer 2" },
-    { id: "gpt-5.2", name: "GPT 5.2" },
-    { id: "gpt-5.3-codex", name: "GPT 5.3 Codex" },
-    { id: "claude-4.6-opus-max", name: "Claude 4.6 Opus Max" },
-    { id: "claude-4.6-sonnet-medium", name: "Claude 4.6 Sonnet Medium" },
-    { id: "gemini-3-flash", name: "Gemini 3 Flash" },
-    { id: "kimi-k2.5", name: "Kimi K2.5" },
+    { id: "default", name: "Default" },
   ],
   features: {
     usage: false,
