@@ -281,32 +281,36 @@ export async function POST(request, { params }) {
         }
         const providerData = getProvider("cursor-cli");
         const pollResult = await providerData.pollToken(providerData.config, uuid, codeVerifier);
-        if (!pollResult.ok) {
-          const err = pollResult.data?.error;
-          if (err === "authorization_pending") {
-            return NextResponse.json({ status: "pending" });
-          }
-          return NextResponse.json({ error: pollResult.data?.error_description || err || "Authorization failed" }, { status: 400 });
+
+        if (pollResult.ok) {
+          const tokens = providerData.mapTokens(pollResult.data);
+          const connection = await createProviderConnection({
+            provider: "cursor-cli",
+            authType: "oauth",
+            ...tokens,
+            expiresAt: tokens.expiresIn
+              ? new Date(Date.now() + tokens.expiresIn * 1000).toISOString()
+              : null,
+            testStatus: "active",
+          });
+          return NextResponse.json({
+            success: true,
+            connection: {
+              id: connection.id,
+              provider: connection.provider,
+              email: connection.email,
+              displayName: connection.displayName,
+            },
+          });
         }
-        const tokens = providerData.mapTokens(pollResult.data);
-        const connection = await createProviderConnection({
-          provider: "cursor-cli",
-          authType: "oauth",
-          ...tokens,
-          expiresAt: tokens.expiresIn
-            ? new Date(Date.now() + tokens.expiresIn * 1000).toISOString()
-            : null,
-          testStatus: "active",
-        });
+
+        const err = pollResult.data?.error;
+        if (err === "authorization_pending" || err === "server_error") {
+          return NextResponse.json({ status: "pending" });
+        }
         return NextResponse.json({
-          success: true,
-          connection: {
-            id: connection.id,
-            provider: connection.provider,
-            email: connection.email,
-            displayName: connection.displayName,
-          },
-        });
+          error: pollResult.data?.error_description || err || "Authorization failed",
+        }, { status: 400 });
       }
 
       // ── Standard device_code polling ─────────────────────────────

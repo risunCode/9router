@@ -1086,52 +1086,31 @@ const PROVIDERS = {
       return `${config.loginUrl}?${params.toString()}`;
     },
     /**
-     * Poll Cursor CLI auth. Called directly by the route handler when
-     * the frontend POSTs to /api/oauth/cursor-cli/poll with { uuid, verifier }.
+     * Poll Cursor CLI auth — single attempt, called per frontend poll cycle.
+     * Returns immediately; the route handler decides pending/success/error.
      */
     pollToken: async (config, uuid, verifier) => {
-      let delay = 1000;
-      let consecutiveErrors = 0;
-      for (let attempt = 0; attempt < 150; attempt++) {
-        await new Promise((r) => setTimeout(r, delay));
-        try {
-          const res = await fetch(`${config.pollUrl}?uuid=${uuid}&verifier=${verifier}`);
-          // 404 = not yet authorized; 400 = also not yet in some cases
-          if (res.status === 404 || res.status === 400) {
-            consecutiveErrors = 0;
-            delay = Math.min(delay * 1.2, 10000);
-            continue;
-          }
-          if (res.ok) {
-            const data = await res.json();
-            if (data.accessToken) {
-              return {
-                ok: true,
-                data: {
-                  access_token: data.accessToken,
-                  refresh_token: data.refreshToken || null,
-                },
-              };
-            }
-            return { ok: false, data: { error: "authorization_pending" } };
-          }
-          if (res.status >= 500) {
-            consecutiveErrors++;
-            if (consecutiveErrors >= 5) {
-              throw new Error(`Cursor CLI poll returned HTTP ${res.status} after ${consecutiveErrors} attempts`);
-            }
-            delay = Math.min(delay * 2, 30000);
-            continue;
-          }
-          throw new Error(`Cursor CLI poll returned HTTP ${res.status}`);
-        } catch (e) {
-          if (e.message?.startsWith("Cursor CLI poll returned")) throw e;
-          consecutiveErrors++;
-          if (consecutiveErrors >= 5) throw e;
-          delay = Math.min(delay * 2, 30000);
-        }
+      const res = await fetch(`${config.pollUrl}?uuid=${uuid}&verifier=${verifier}`);
+      if (res.status === 404 || res.status === 400) {
+        return { ok: false, data: { error: "authorization_pending" } };
       }
-      throw new Error("Cursor CLI authentication timeout");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.accessToken) {
+          return {
+            ok: true,
+            data: {
+              access_token: data.accessToken,
+              refresh_token: data.refreshToken || null,
+            },
+          };
+        }
+        return { ok: false, data: { error: "authorization_pending" } };
+      }
+      if (res.status >= 500) {
+        return { ok: false, data: { error: "server_error", error_description: `Upstream returned HTTP ${res.status}` } };
+      }
+      return { ok: false, data: { error: "access_denied", error_description: `Cursor CLI poll returned HTTP ${res.status}` } };
     },
     mapTokens: (tokens) => ({
       accessToken: tokens.access_token,
