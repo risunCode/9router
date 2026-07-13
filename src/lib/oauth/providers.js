@@ -1090,8 +1090,10 @@ const PROVIDERS = {
      * Returns immediately; the route handler decides pending/success/error.
      */
     pollToken: async (config, uuid, verifier) => {
-      const res = await fetch(`${config.pollUrl}?uuid=${uuid}&verifier=${verifier}`);
-      if (res.status === 404 || res.status === 400) {
+      const pollUrl = new URL(config.pollUrl);
+      pollUrl.search = new URLSearchParams({ uuid, verifier }).toString();
+      const res = await fetch(pollUrl);
+      if (res.status === 404) {
         return { ok: false, data: { error: "authorization_pending" } };
       }
       if (res.ok) {
