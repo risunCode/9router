@@ -22,6 +22,7 @@ import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
+import { enforceApiKeyPolicy } from "../services/apiKeyPolicy.js";
 
 /**
  * Handle chat completion request
@@ -80,6 +81,14 @@ export async function handleChat(request, clientRawRequest = null) {
     log.warn("CHAT", "Missing model");
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
   }
+
+  const acl = await enforceApiKeyPolicy({ apiKey, model: modelStr, body, endpoint: new URL(request.url).pathname });
+  if (acl.error) {
+    const response = errorResponse(acl.error.status, acl.error.message);
+    if (acl.error.retryAfter) response.headers.set("Retry-After", String(acl.error.retryAfter));
+    return response;
+  }
+  body._apiKeyAcl = acl.context;
 
   // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots
   const userAgent = request?.headers?.get("user-agent") || "";

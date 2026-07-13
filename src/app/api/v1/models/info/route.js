@@ -1,6 +1,10 @@
 import { PROVIDER_MODELS } from "open-sse/config/providerModels.js";
 import { AI_PROVIDERS, ALIAS_TO_ID } from "@/shared/constants/providers";
 import { getModelKind } from "@/shared/constants/models";
+import {
+  filterModelCatalog,
+  resolveModelsApiKeyPolicy,
+} from "../route.js";
 
 const KIND_ENDPOINT = {
   llm: "/v1/chat/completions",
@@ -84,6 +88,9 @@ export async function OPTIONS() {
 
 // GET /v1/models/info?id={alias}/{modelId} — metadata for a single model
 export async function GET(request) {
+  const auth = await resolveModelsApiKeyPolicy(request);
+  if (auth.response) return auth.response;
+
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
   const kind = searchParams.get("kind");
@@ -94,7 +101,7 @@ export async function GET(request) {
     );
   }
   const info = lookup(id, kind);
-  if (!info) {
+  if (!info || filterModelCatalog([info], auth.policy).length === 0) {
     return Response.json(
       { error: { message: `Model not found: ${id}`, type: "not_found" } },
       { status: 404, headers: { "Access-Control-Allow-Origin": "*" } },

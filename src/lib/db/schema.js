@@ -3,7 +3,7 @@
 // pre-change safety backup in migrate.js: when the stored version is lower,
 // one lightweight DB backup is taken before applying schema changes. Forgetting
 // to bump only skips that backup — it does NOT break the additive auto-sync.
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -85,6 +85,49 @@ export const TABLES = {
       createdAt: "TEXT NOT NULL",
     },
     indexes: ["CREATE INDEX IF NOT EXISTS idx_ak_key ON apiKeys(key)"],
+  },
+  apiKeyAcl: {
+    columns: {
+      keyId: "TEXT PRIMARY KEY REFERENCES apiKeys(id) ON DELETE CASCADE",
+      allowedModels: "TEXT NOT NULL DEFAULT '[]'",
+      dailyTokenLimit: "INTEGER",
+      lifetimeTokenLimit: "INTEGER",
+      expiresAt: "TEXT",
+      updatedAt: "TEXT NOT NULL",
+    },
+  },
+  apiKeyQuotaUsage: {
+    columns: {
+      keyId: "TEXT NOT NULL REFERENCES apiKeys(id) ON DELETE CASCADE",
+      dateKey: "TEXT NOT NULL",
+      committedPromptTokens: "INTEGER NOT NULL DEFAULT 0",
+      committedCompletionTokens: "INTEGER NOT NULL DEFAULT 0",
+      reservedTokens: "INTEGER NOT NULL DEFAULT 0",
+    },
+    primaryKey: "PRIMARY KEY (keyId, dateKey)",
+    indexes: ["CREATE INDEX IF NOT EXISTS idx_akqu_key_date ON apiKeyQuotaUsage(keyId, dateKey)"],
+  },
+  apiKeyLifetimeQuotaUsage: {
+    columns: {
+      keyId: "TEXT PRIMARY KEY REFERENCES apiKeys(id) ON DELETE CASCADE",
+      committedPromptTokens: "INTEGER NOT NULL DEFAULT 0",
+      committedCompletionTokens: "INTEGER NOT NULL DEFAULT 0",
+      reservedTokens: "INTEGER NOT NULL DEFAULT 0",
+      updatedAt: "TEXT NOT NULL",
+    },
+  },
+  apiKeyQuotaReservations: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      keyId: "TEXT NOT NULL REFERENCES apiKeys(id) ON DELETE CASCADE",
+      dateKey: "TEXT NOT NULL",
+      reservedTokens: "INTEGER NOT NULL",
+      createdAt: "TEXT NOT NULL",
+      expiresAt: "TEXT NOT NULL",
+      endpoint: "TEXT",
+      model: "TEXT",
+    },
+    indexes: ["CREATE INDEX IF NOT EXISTS idx_akqr_key_expiry ON apiKeyQuotaReservations(keyId, expiresAt)"],
   },
   combos: {
     columns: {

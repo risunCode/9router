@@ -78,6 +78,55 @@ The current generated binding source is the verified `DevinRouter` implementatio
 4. Remove stale source-map directives if the TypeScript source maps are not copied.
 5. Run focused Devin tests and the production build before merging.
 
+## API-key ACL (shared/bansos keys)
+
+API-key ACL is opt-in. A legacy key without an `apiKeyAcl` row remains active, unrestricted, non-expiring, and quota-unlimited.
+
+### Policy contract
+
+```json
+{
+  "allowedModels": ["devin/swe-1-6-slow"],
+  "dailyTokenLimit": 2000000,
+  "lifetimeTokenLimit": 20000000,
+  "expiresAt": "2026-08-01T00:00:00.000Z"
+}
+```
+
+- Empty `allowedModels` means all otherwise available models.
+- Zero/absent limits mean unlimited; absent `expiresAt` means no expiry.
+- Model identifiers are exact and case-sensitive. Allowed aliases resolve to their current target; allowed combo names permit the combo's internal fallback members.
+- A disabled or expired key is denied before upstream selection (`401`). A denied model is `403 model_not_allowed`. Daily/lifetime exhaustion is `429 token_quota_exceeded`; daily responses include `Retry-After`.
+- `/v1/models`, kind/info routes, and Gemini discovery are filtered to the key's allowlist.
+
+### Data ownership and quota invariant
+
+| Data | Owner |
+| --- | --- |
+| Policy | `apiKeyAcl` / `apiKeyAclRepo.js` |
+| Daily committed + reserved tokens | `apiKeyQuotaUsage` |
+| Lifetime committed + reserved tokens | `apiKeyLifetimeQuotaUsage` |
+| In-flight reservations | `apiKeyQuotaReservations` |
+| Shared enforcement | `src/sse/services/apiKeyPolicy.js` |
+
+Reservations are created before provider selection and increment reserved counters in the same SQLite transaction. Settlement records actual usage and releases unused reservation capacity. Never replace this with a non-atomic "check then increment" flow. Incomplete streams are charged their reservation conservatively; stale reservations have a bounded lazy cleanup TTL.
+
+Dashboard key create/update uses top-level fields (`allowedModels`, `dailyTokenLimit`, `lifetimeTokenLimit`, `expiresAt`); GET/list returns nested `policy` and `quota` summaries. The raw key is creation-only and must never be added to policy/usage output.
+
+### ACL verification
+
+```bash
+npx vitest run --config tests/vitest.config.js \
+  tests/unit/api-key-acl.test.js \
+  tests/unit/api-key-acl-model-routes.test.js \
+  tests/unit/api-key-acl-media-handlers.test.js \
+  tests/unit/api-key-acl-special-handlers.test.js \
+  tests/unit/gemini-native-endpoint.test.js
+npm run build
+```
+
+On Windows, the existing generic DB concurrency test may fail cleanup with `EPERM` on its temporary SQLite directory. Treat it as an environment/harness diagnosis unless a focused ACL reservation test fails; do not weaken atomic ledger behavior to make that cleanup race disappear.
+
 ## Safe upstream update procedure
 
 Use this procedure after custom work is committed or intentionally stashed. Never merge upstream over an unknown dirty working tree.

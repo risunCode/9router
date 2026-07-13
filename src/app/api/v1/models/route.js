@@ -14,6 +14,46 @@ import { resolveCopilotModels } from "open-sse/services/copilotModels.js";
 import { resolveClinepassModels } from "open-sse/services/clinepassModels.js";
 import { updateProviderCredentials } from "@/sse/services/tokenRefresh";
 import { capabilitiesFromServiceKind } from "open-sse/providers/capabilities.js";
+import { extractApiKey } from "@/sse/services/auth.js";
+import { getSettings } from "@/lib/localDb";
+import { isLocalRequest } from "@/dashboardGuard";
+import {
+  filterModelsByApiKeyPolicy,
+  resolveApiKeyPolicy,
+} from "@/sse/services/apiKeyPolicy.js";
+
+const CORS_HEADERS = { "Access-Control-Allow-Origin": "*" };
+
+export async function resolveModelsApiKeyPolicy(request) {
+  if (!request) return { policy: null };
+
+  const apiKey = extractApiKey(request);
+  if (!apiKey) {
+    const settings = await getSettings();
+    if (!settings.requireApiKey || isLocalRequest(request)) return { policy: null };
+
+    return {
+      response: Response.json(
+        { error: { message: "Missing API key", type: "authentication_error" } },
+        { status: 401, headers: CORS_HEADERS },
+      ),
+    };
+  }
+
+  const resolved = await resolveApiKeyPolicy(apiKey);
+  if (resolved) return { policy: resolved.policy };
+
+  return {
+    response: Response.json(
+      { error: { message: "Invalid API key", type: "authentication_error" } },
+      { status: 401, headers: CORS_HEADERS },
+    ),
+  };
+}
+
+export function filterModelCatalog(models, policy, context) {
+  return filterModelsByApiKeyPolicy(models, policy, context);
+}
 
 // Per-provider live model resolvers. Each receives a connection record and
 // returns { models: [{ id, name? }, ...] } | null on failure.
@@ -475,11 +515,14 @@ export async function OPTIONS() {
  * GET /v1/models - OpenAI compatible models list (LLM/chat models only by default).
  * For other capabilities use /v1/models/{kind} (image, tts, stt, embedding, image-to-text, web).
  */
-export async function GET() {
+export async function GET(request) {
   try {
+    const auth = await resolveModelsApiKeyPolicy(request);
+    if (auth.response) return auth.response;
+
     const data = await buildModelsList([LLM_KIND]);
-    return Response.json({ object: "list", data }, {
-      headers: { "Access-Control-Allow-Origin": "*" },
+    return Response.json({ object: "list", data: filterModelCatalog(data, auth.policy) }, {
+      headers: CORS_HEADERS,
     });
   } catch (error) {
     console.log("Error fetching models:", error);

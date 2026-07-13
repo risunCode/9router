@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   getProviderCredentials: vi.fn(),
   markAccountUnavailable: vi.fn(),
   clearAccountError: vi.fn(),
+  enforceApiKeyPolicy: vi.fn(),
 }));
 
 vi.mock("@/sse/handlers/chat.js", () => ({
@@ -22,6 +23,15 @@ vi.mock("@/sse/services/auth.js", () => ({
 
 vi.mock("@/lib/localDb", () => ({
   getSettings: mocks.getSettings,
+}));
+
+vi.mock("@/sse/services/apiKeyPolicy.js", () => ({
+  enforceApiKeyPolicy: mocks.enforceApiKeyPolicy,
+}));
+
+vi.mock("../../src/app/api/v1/models/route.js", () => ({
+  filterModelCatalog: (models) => models,
+  resolveModelsApiKeyPolicy: vi.fn().mockResolvedValue({ policy: null }),
 }));
 
 const { GET } = await import("../../src/app/api/v1beta/models/route.js");
@@ -68,6 +78,7 @@ describe("Gemini native v1beta endpoint", () => {
       providerSpecificData: {},
     });
     mocks.markAccountUnavailable.mockResolvedValue({ shouldFallback: false });
+    mocks.enforceApiKeyPolicy.mockResolvedValue({ context: null, error: null });
     global.fetch = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "ok" }] } }] }), {
         status: 200,
@@ -80,6 +91,7 @@ describe("Gemini native v1beta endpoint", () => {
   });
 
   it("lists Gemini TTS models using standard Google model names", async () => {
+    mocks.getSettings.mockResolvedValueOnce({ requireApiKey: false });
     const response = await GET();
     const body = await response.json();
     const names = body.models.map((model) => model.name);
@@ -125,6 +137,43 @@ describe("Gemini native v1beta endpoint", () => {
     expect(mocks.isValidApiKey).toHaveBeenCalledWith("client-router-key");
     expect(global.fetch.mock.calls[0][1].headers["x-goog-api-key"]).toBe("real-gemini-key");
     expect(global.fetch.mock.calls[0][1].headers["x-goog-api-key"]).not.toBe("client-router-key");
+  });
+
+  it("denies a native Gemini TTS request before selecting provider credentials or calling upstream", async () => {
+    mocks.enforceApiKeyPolicy.mockResolvedValueOnce({
+      context: null,
+      error: { status: 403, code: "model_not_allowed", message: "Model is not allowed for this API key" },
+    });
+
+    const response = await POST(makeGeminiRequest("gemini-3.1-flash-tts-preview:generateContent", audioBody()), {
+      params: Promise.resolve({ path: ["gemini-3.1-flash-tts-preview:generateContent"] }),
+    });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: { message: "Model is not allowed for this API key" },
+    });
+    expect(mocks.enforceApiKeyPolicy).toHaveBeenCalledWith(expect.objectContaining({
+      apiKey: "router-client-key",
+      model: "gemini-3.1-flash-tts-preview",
+      endpoint: "/v1beta/models/gemini-3.1-flash-tts-preview:generateContent",
+    }));
+    expect(mocks.getProviderCredentials).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("passes Google-style keys to the existing chat ACL through Authorization", async () => {
+    await POST(makeGeminiRequest(
+      "gemini-2.5-flash:generateContent",
+      { contents: [{ parts: [{ text: "hello" }] }] },
+      { Authorization: "", "x-goog-api-key": "client-router-key" },
+    ), {
+      params: Promise.resolve({ path: ["gemini-2.5-flash:generateContent"] }),
+    });
+
+    const forwardedRequest = mocks.handleChat.mock.calls[0][0];
+    expect(forwardedRequest.headers.get("Authorization")).toBe("Bearer client-router-key");
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it("does not forward stale compression headers from native upstream responses", async () => {
@@ -246,6 +295,24 @@ describe("Gemini native v1beta endpoint", () => {
     });
 
     expect(mocks.handleChat).toHaveBeenCalledTimes(1);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("returns Gemini chat ACL denials without using the native upstream route", async () => {
+    mocks.handleChat.mockResolvedValueOnce(Response.json(
+      { error: { message: "Model is not allowed for this API key" } },
+      { status: 403 },
+    ));
+
+    const response = await POST(makeGeminiRequest("gemini-2.5-flash:generateContent", {
+      contents: [{ parts: [{ text: "blocked" }] }],
+    }), {
+      params: Promise.resolve({ path: ["gemini-2.5-flash:generateContent"] }),
+    });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: { message: "Model is not allowed for this API key" } });
+    expect(mocks.handleChat).toHaveBeenCalledOnce();
     expect(global.fetch).not.toHaveBeenCalled();
   });
 

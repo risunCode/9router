@@ -9,6 +9,7 @@ import { getSettings } from "@/lib/localDb";
 import { PROVIDER_MODELS } from "@/shared/constants/models";
 import { GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS } from "open-sse/config/runtimeConfig.js";
 import { initTranslators } from "open-sse/translator/index.js";
+import { enforceApiKeyPolicy } from "@/sse/services/apiKeyPolicy.js";
 
 let initialized = false;
 const GEMINI_NATIVE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -88,6 +89,9 @@ export async function POST(request, { params }) {
       return await forwardGeminiNativeRequest(request, body, model, action);
     }
 
+    const apiKey = extractGeminiClientApiKey(request);
+    const settings = await getSettings();
+
     // Streaming is determined by URL action suffix:
     //   :streamGenerateContent => stream: true  (SSE)
     //   :generateContent       => stream: false (plain JSON)
@@ -97,9 +101,13 @@ export async function POST(request, { params }) {
     const convertedBody = convertGeminiToInternal(body, model, stream);
 
     // Create new request with converted body
+    const headers = new Headers(request.headers);
+    if (settings.requireApiKey && apiKey && !headers.get("Authorization")) {
+      headers.set("Authorization", `Bearer ${apiKey}`);
+    }
     const newRequest = new Request(request.url, {
       method: "POST",
-      headers: request.headers,
+      headers,
       body: JSON.stringify(convertedBody),
     });
 
@@ -178,20 +186,32 @@ function buildGeminiNativeUrl(requestUrl, model, action) {
 }
 
 async function validateGeminiNativeClientKey(request) {
-  const settings = await getSettings();
-  if (!settings.requireApiKey) return null;
-
   const apiKey = extractGeminiClientApiKey(request);
+  const settings = await getSettings();
+  if (!settings.requireApiKey) return { apiKey: null, error: null };
+
   if (!apiKey) {
-    return Response.json({ error: { message: "Missing API key" } }, { status: 401 });
+    return {
+      apiKey: null,
+      error: Response.json({ error: { message: "Missing API key" } }, { status: 401 }),
+    };
   }
 
   const valid = await isValidApiKey(apiKey);
   if (!valid) {
-    return Response.json({ error: { message: "Invalid API key" } }, { status: 401 });
+    return {
+      apiKey: null,
+      error: Response.json({ error: { message: "Invalid API key" } }, { status: 401 }),
+    };
   }
 
-  return null;
+  return { apiKey, error: null };
+}
+
+function geminiPolicyErrorResponse(error) {
+  const response = Response.json({ error: { message: error.message } }, { status: error.status });
+  if (error.retryAfter) response.headers.set("Retry-After", String(error.retryAfter));
+  return response;
 }
 
 function buildGeminiNativeAuthHeaders(credentials) {
@@ -236,13 +256,22 @@ function getSafeGeminiNativeErrorText(error) {
 }
 
 async function forwardGeminiNativeRequest(request, body, model, action) {
-  const authError = await validateGeminiNativeClientKey(request);
+  const { apiKey, error: authError } = await validateGeminiNativeClientKey(request);
   if (authError) return authError;
 
   const modelId = normalizeGeminiNativeModel(model);
   if (!GEMINI_NATIVE_MODEL_PATTERN.test(modelId)) {
     return Response.json({ error: { message: "Invalid model" } }, { status: 400 });
   }
+
+  const acl = await enforceApiKeyPolicy({
+    apiKey,
+    model,
+    body,
+    endpoint: new URL(request.url).pathname,
+  });
+  if (acl.error) return geminiPolicyErrorResponse(acl.error);
+
   const excludeConnectionIds = new Set();
   const bodyText = JSON.stringify(body);
   let lastError = null;

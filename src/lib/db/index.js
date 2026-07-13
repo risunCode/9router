@@ -1,5 +1,6 @@
 // Public API barrel — all DB functions
 import { getAdapter } from "./driver.js";
+export { getAdapter } from "./driver.js";
 import { stringifyJson, parseJson } from "./helpers/jsonCol.js";
 
 // Settings
@@ -31,6 +32,8 @@ export {
 export {
   getApiKeys, getApiKeyById, createApiKey, updateApiKey, deleteApiKey, validateApiKey,
 } from "./repos/apiKeysRepo.js";
+export { getApiKeyPolicy, setApiKeyPolicy, deleteApiKeyPolicy, normalizeApiKeyPolicy } from "./repos/apiKeyAclRepo.js";
+export { getApiKeyQuotaSummary, reserveApiKeyQuota, settleApiKeyQuota } from "./repos/quotaRepo.js";
 
 // Combos
 export {

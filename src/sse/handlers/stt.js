@@ -9,6 +9,7 @@ import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
 import * as log from "../utils/logger.js";
+import { enforceApiKeyPolicy } from "../services/apiKeyPolicy.js";
 
 // Providers requiring credentials for STT
 const CREDENTIALED_PROVIDERS = new Set(
@@ -28,9 +29,9 @@ export async function handleStt(request) {
   const modelStr = formData.get("model");
   log.request("POST", `/v1/audio/transcriptions | ${modelStr}`);
 
+  const apiKey = extractApiKey(request);
   const settings = await getSettings();
   if (settings.requireApiKey) {
-    const apiKey = extractApiKey(request);
     if (!apiKey) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
     const valid = await isValidApiKey(apiKey);
     if (!valid) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
@@ -38,6 +39,18 @@ export async function handleStt(request) {
 
   if (!modelStr) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
   if (!formData.get("file")) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing required field: file");
+
+  const acl = await enforceApiKeyPolicy({
+    apiKey,
+    model: modelStr,
+    body: { model: modelStr },
+    endpoint: new URL(request.url).pathname,
+  });
+  if (acl.error) {
+    const response = errorResponse(acl.error.status, acl.error.message);
+    if (acl.error.retryAfter) response.headers.set("Retry-After", String(acl.error.retryAfter));
+    return response;
+  }
 
   const modelInfo = await getModelInfo(modelStr);
   if (!modelInfo.provider) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");

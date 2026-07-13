@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import PropTypes from "prop-types";
 import { Card, Button, Input, Modal, CardSkeleton, Toggle, ConfirmModal } from "@/shared/components";
+import ApiKeyModelMultiSelectField from "@/shared/components/ApiKeyModelMultiSelectField";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import {
   TUNNEL_BENEFITS,
@@ -17,11 +18,157 @@ import EndpointRow from "./components/EndpointRow";
 import StatusAlert from "./components/StatusAlert";
 import Tooltip from "./components/Tooltip";
 import SecurityWarning from "./components/SecurityWarning";
+
+const createEmptyKeyPolicy = () => ({
+  allowedModels: [],
+  dailyTokenLimit: "",
+  lifetimeTokenLimit: "",
+  expiresAt: "",
+});
+
+const toDateTimeLocal = (value) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+};
+
+const policyToForm = (policy = {}) => ({
+  allowedModels: Array.isArray(policy.allowedModels) ? policy.allowedModels : [],
+  dailyTokenLimit: policy.dailyTokenLimit ?? "",
+  lifetimeTokenLimit: policy.lifetimeTokenLimit ?? "",
+  expiresAt: policy.expiresAt ? toDateTimeLocal(policy.expiresAt) : "",
+});
+
+const keyPolicyPayload = (policy) => ({
+  allowedModels: policy.allowedModels,
+  dailyTokenLimit: policy.dailyTokenLimit === "" ? null : Number(policy.dailyTokenLimit),
+  lifetimeTokenLimit: policy.lifetimeTokenLimit === "" ? null : Number(policy.lifetimeTokenLimit),
+  expiresAt: policy.expiresAt ? new Date(policy.expiresAt).toISOString() : null,
+});
+
+const keyState = (key) => {
+  if (key.isActive === false || key.quota?.state === "disabled") return "paused";
+  if (key.quota?.state === "expired" || (key.policy?.expiresAt && new Date(key.policy.expiresAt) <= new Date())) return "expired";
+  return "active";
+};
+
+const formatTokens = (value) => new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value || 0);
+
+const quotaText = (quota, label) => {
+  if (!quota || !quota.limit) return `${label}: Unlimited`;
+  const remaining = Math.max(0, quota.remaining ?? quota.limit - (quota.used || 0) - (quota.reserved || 0));
+  return `${label}: ${formatTokens(quota.used)} used · ${formatTokens(remaining)} remaining`;
+};
+
+const quotaProgress = (quota) => {
+  if (!quota?.limit) return 0;
+  return Math.min(100, (((quota.used || 0) + (quota.reserved || 0)) / quota.limit) * 100);
+};
+
+function QuotaProgressBar({ quota, label }) {
+  const hasLimit = Boolean(quota?.limit);
+  const used = quota?.used || 0;
+  const reserved = quota?.reserved || 0;
+  const percent = quotaProgress(quota);
+
+  return (
+    <div className="min-w-0" aria-label={quotaText(quota, label)}>
+      <div className="flex items-center justify-between gap-2 text-xs text-text-muted">
+        <span>{label}</span>
+        <span className="shrink-0">{hasLimit ? `${formatTokens(used)} / ${formatTokens(quota.limit)}` : "Unlimited"}</span>
+      </div>
+      {hasLimit && (
+        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-3">
+          <div className="h-full rounded-full bg-primary" style={{ width: `${percent}%` }} />
+        </div>
+      )}
+      {hasLimit && reserved > 0 && <p className="mt-1 text-[11px] text-text-muted">{formatTokens(reserved)} reserved</p>}
+    </div>
+  );
+}
+
+QuotaProgressBar.propTypes = {
+  quota: PropTypes.shape({
+    used: PropTypes.number,
+    reserved: PropTypes.number,
+    limit: PropTypes.number,
+  }),
+  label: PropTypes.string.isRequired,
+};
+
+function ApiKeyPolicyForm({ policy, onChange, disabled = false }) {
+  const updateField = (field, value) => onChange({ ...policy, [field]: value });
+
+  return (
+    <div className="flex flex-col gap-4 border-t border-border pt-4">
+      <div>
+        <h3 className="text-sm font-semibold text-text-main">Access policy</h3>
+        <p className="text-xs text-text-muted">Optional limits for this key. Empty fields remain unrestricted.</p>
+      </div>
+      <ApiKeyModelMultiSelectField
+        value={policy.allowedModels}
+        onChange={(allowedModels) => updateField("allowedModels", allowedModels)}
+        disabled={disabled}
+      />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Input
+          label="Daily token limit"
+          type="number"
+          min="0"
+          step="1"
+          inputMode="numeric"
+          placeholder="Unlimited"
+          value={policy.dailyTokenLimit}
+          onChange={(event) => updateField("dailyTokenLimit", event.target.value)}
+          disabled={disabled}
+          hint="Leave empty or use 0 for unlimited."
+        />
+        <Input
+          label="Lifetime token limit"
+          type="number"
+          min="0"
+          step="1"
+          inputMode="numeric"
+          placeholder="Unlimited"
+          value={policy.lifetimeTokenLimit}
+          onChange={(event) => updateField("lifetimeTokenLimit", event.target.value)}
+          disabled={disabled}
+          hint="Leave empty or use 0 for unlimited."
+        />
+      </div>
+      <Input
+        label="Expiry date"
+        type="datetime-local"
+        value={policy.expiresAt}
+        onChange={(event) => updateField("expiresAt", event.target.value)}
+        disabled={disabled}
+        hint="Leave empty for no expiry."
+      />
+    </div>
+  );
+}
+
+ApiKeyPolicyForm.propTypes = {
+  policy: PropTypes.shape({
+    allowedModels: PropTypes.arrayOf(PropTypes.string).isRequired,
+    dailyTokenLimit: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+    lifetimeTokenLimit: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+    expiresAt: PropTypes.string.isRequired,
+  }).isRequired,
+  onChange: PropTypes.func.isRequired,
+  disabled: PropTypes.bool,
+};
+
 export default function APIPageClient({ machineId }) {
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
+  const [keyPolicy, setKeyPolicy] = useState(createEmptyKeyPolicy);
+  const [editingKey, setEditingKey] = useState(null);
+  const [keyFormError, setKeyFormError] = useState("");
+  const [savingKey, setSavingKey] = useState(false);
   const [createdKey, setCreatedKey] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
 
@@ -607,25 +754,78 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
+  const resetKeyForm = () => {
+    setNewKeyName("");
+    setKeyPolicy(createEmptyKeyPolicy());
+    setKeyFormError("");
+    setEditingKey(null);
+  };
+
+  const readError = async (response, fallback) => {
+    const data = await response.json().catch(() => ({}));
+    return data.error?.message || data.error || data.message || fallback;
+  };
+
   const handleCreateKey = async () => {
     if (!newKeyName.trim()) return;
 
+    setSavingKey(true);
+    setKeyFormError("");
     try {
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newKeyName }),
+        body: JSON.stringify({ name: newKeyName.trim(), ...keyPolicyPayload(keyPolicy) }),
       });
-      const data = await res.json();
 
-      if (res.ok) {
-        setCreatedKey(data.key);
-        await fetchData();
-        setNewKeyName("");
-        setShowAddModal(false);
+      if (!res.ok) {
+        setKeyFormError(await readError(res, "Failed to create API key"));
+        return;
       }
+
+      const data = await res.json();
+      setCreatedKey(data.key);
+      await fetchData();
+      resetKeyForm();
+      setShowAddModal(false);
     } catch (error) {
-      console.log("Error creating key:", error);
+      setKeyFormError(error.message || "Failed to create API key");
+    } finally {
+      setSavingKey(false);
+    }
+  };
+
+  const openEditKey = (key) => {
+    setEditingKey(key);
+    setNewKeyName(key.name || "");
+    setKeyPolicy(policyToForm(key.policy));
+    setKeyFormError("");
+  };
+
+  const handleUpdateKey = async () => {
+    if (!editingKey || !newKeyName.trim()) return;
+
+    setSavingKey(true);
+    setKeyFormError("");
+    try {
+      const res = await fetch(`/api/keys/${editingKey.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(keyPolicyPayload(keyPolicy)),
+      });
+
+      if (!res.ok) {
+        setKeyFormError(await readError(res, "Failed to update API key"));
+        return;
+      }
+
+      const data = await res.json();
+      setKeys((previous) => previous.map((key) => key.id === editingKey.id ? (data.key || { ...key, policy: keyPolicyPayload(keyPolicy) }) : key));
+      resetKeyForm();
+    } catch (error) {
+      setKeyFormError(error.message || "Failed to update API key");
+    } finally {
+      setSavingKey(false);
     }
   };
 
@@ -992,13 +1192,29 @@ export default function APIPageClient({ machineId }) {
           </div>
         ) : (
           <div className="flex flex-col">
-            {keys.map((key) => (
+            {keys.map((key) => {
+              const state = keyState(key);
+              const allowedModels = key.policy?.allowedModels || [];
+              const stateClass = state === "active"
+                ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                : state === "expired"
+                  ? "bg-red-500/10 text-red-600 dark:text-red-400"
+                  : "bg-orange-500/10 text-orange-600 dark:text-orange-400";
+              const stateLabel = state === "paused" ? "Paused" : state[0].toUpperCase() + state.slice(1);
+
+              return (
               <div
                 key={key.id}
-                className={`group flex items-center justify-between py-3 border-b border-black/[0.03] dark:border-white/[0.03] last:border-b-0 ${key.isActive === false ? "opacity-60" : ""}`}
+                className={`group flex items-start justify-between gap-3 py-3 border-b border-black/[0.03] dark:border-white/[0.03] last:border-b-0 ${state === "paused" ? "opacity-60" : ""}`}
               >
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium">{key.name}</p>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-medium">{key.name}</p>
+                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${stateClass}`}>{stateLabel}</span>
+                    <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] text-text-muted">
+                      {allowedModels.length === 0 ? "All models" : `${allowedModels.length} ${allowedModels.length === 1 ? "model" : "models"}`}
+                    </span>
+                  </div>
                   <div className="flex items-center gap-2 mt-1">
                     <code className="text-xs text-text-muted font-mono">
                       {visibleKeys.has(key.id) ? key.key : maskKey(key.key)}
@@ -1022,13 +1238,14 @@ export default function APIPageClient({ machineId }) {
                     </button>
                   </div>
                   <p className="text-xs text-text-muted mt-1">
-                    Created {new Date(key.createdAt).toLocaleDateString()}
+                    Created {new Date(key.createdAt).toLocaleDateString()} · {key.policy?.expiresAt ? `Expires ${new Date(key.policy.expiresAt).toLocaleString()}` : "No expiry"}
                   </p>
-                  {key.isActive === false && (
-                    <p className="text-xs text-orange-500 mt-1">Paused</p>
-                  )}
+                  <div className="mt-3 grid max-w-xl gap-2 sm:grid-cols-2">
+                    <QuotaProgressBar quota={key.quota?.daily} label="Daily" />
+                    <QuotaProgressBar quota={key.quota?.lifetime} label="Lifetime" />
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex shrink-0 items-center gap-1">
                   <Toggle
                     size="sm"
                     checked={key.isActive ?? true}
@@ -1049,6 +1266,16 @@ export default function APIPageClient({ machineId }) {
                     title={key.isActive ? "Pause key" : "Resume key"}
                   />
                   <button
+                    type="button"
+                    onClick={() => openEditKey(key)}
+                    className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
+                    title="Edit key policy"
+                    aria-label={`Edit ${key.name}`}
+                  >
+                    <span className="material-symbols-outlined text-[18px]">edit</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => handleDeleteKey(key.id)}
                     className="p-2 hover:bg-red-500/10 rounded text-red-500 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
                   >
@@ -1056,7 +1283,8 @@ export default function APIPageClient({ machineId }) {
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </Card>
@@ -1067,30 +1295,57 @@ export default function APIPageClient({ machineId }) {
         title="Create API Key"
         onClose={() => {
           setShowAddModal(false);
-          setNewKeyName("");
+          resetKeyForm();
         }}
       >
         <div className="flex flex-col gap-4">
           <Input
             label="Key Name"
             value={newKeyName}
-            onChange={(e) => setNewKeyName(e.target.value)}
+            onChange={(event) => setNewKeyName(event.target.value)}
             placeholder="Production Key"
+            disabled={savingKey}
           />
+          <ApiKeyPolicyForm policy={keyPolicy} onChange={setKeyPolicy} disabled={savingKey} />
+          {keyFormError && <p role="alert" className="text-sm text-red-500">{keyFormError}</p>}
           <div className="flex gap-2">
-            <Button onClick={handleCreateKey} fullWidth disabled={!newKeyName.trim()}>
+            <Button onClick={handleCreateKey} fullWidth disabled={!newKeyName.trim()} loading={savingKey}>
               Create
             </Button>
             <Button
               onClick={() => {
                 setShowAddModal(false);
-                setNewKeyName("");
+                resetKeyForm();
               }}
               variant="ghost"
               fullWidth
+              disabled={savingKey}
             >
               Cancel
             </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={!!editingKey}
+        title="Edit API Key"
+        onClose={() => !savingKey && resetKeyForm()}
+      >
+        <div className="flex flex-col gap-4">
+          <Input
+            label="Key Name"
+            value={newKeyName}
+            readOnly
+            hint="Key names cannot be changed after creation."
+          />
+          <ApiKeyPolicyForm policy={keyPolicy} onChange={setKeyPolicy} disabled={savingKey} />
+          {keyFormError && <p role="alert" className="text-sm text-red-500">{keyFormError}</p>}
+          <div className="flex gap-2">
+            <Button onClick={handleUpdateKey} fullWidth loading={savingKey}>
+              Save changes
+            </Button>
+            <Button onClick={resetKeyForm} variant="ghost" fullWidth disabled={savingKey}>Cancel</Button>
           </div>
         </div>
       </Modal>

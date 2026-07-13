@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
+import { getApiKeyPolicy, normalizeApiKeyPolicy } from "./apiKeyAclRepo.js";
 
 function rowToKey(row) {
   if (!row) return null;
@@ -25,8 +26,9 @@ export async function getApiKeyById(id) {
   return rowToKey(row);
 }
 
-export async function createApiKey(name, machineId) {
+export async function createApiKey(name, machineId, policy = null) {
   if (!machineId) throw new Error("machineId is required");
+  const normalizedPolicy = policy ? normalizeApiKeyPolicy(policy) : null;
   const db = await getAdapter();
   const { generateApiKeyWithMachine } = await import("@/shared/utils/apiKey");
   const result = generateApiKeyWithMachine(machineId);
@@ -38,14 +40,18 @@ export async function createApiKey(name, machineId) {
     isActive: true,
     createdAt: new Date().toISOString(),
   };
-  db.run(
-    `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt) VALUES(?, ?, ?, ?, ?, ?)`,
-    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt]
-  );
+  db.transaction(() => {
+    db.run(`INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt) VALUES(?, ?, ?, ?, ?, ?)`, [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt]);
+    if (normalizedPolicy) {
+      db.run(`INSERT INTO apiKeyAcl(keyId, allowedModels, dailyTokenLimit, lifetimeTokenLimit, expiresAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`, [apiKey.id, JSON.stringify(normalizedPolicy.allowedModels), normalizedPolicy.dailyTokenLimit, normalizedPolicy.lifetimeTokenLimit, normalizedPolicy.expiresAt, apiKey.createdAt]);
+      apiKey.policy = { ...normalizedPolicy, updatedAt: apiKey.createdAt };
+    }
+  });
   return apiKey;
 }
 
 export async function updateApiKey(id, data) {
+  const normalizedPolicy = Object.prototype.hasOwnProperty.call(data, "policy") ? normalizeApiKeyPolicy(data.policy) : null;
   const db = await getAdapter();
   let result = null;
   db.transaction(() => {
@@ -56,8 +62,14 @@ export async function updateApiKey(id, data) {
       `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ? WHERE id = ?`,
       [merged.key, merged.name, merged.machineId, merged.isActive ? 1 : 0, id]
     );
+    if (normalizedPolicy) {
+      const updatedAt = new Date().toISOString();
+      db.run(`INSERT INTO apiKeyAcl(keyId, allowedModels, dailyTokenLimit, lifetimeTokenLimit, expiresAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?) ON CONFLICT(keyId) DO UPDATE SET allowedModels = excluded.allowedModels, dailyTokenLimit = excluded.dailyTokenLimit, lifetimeTokenLimit = excluded.lifetimeTokenLimit, expiresAt = excluded.expiresAt, updatedAt = excluded.updatedAt`, [id, JSON.stringify(normalizedPolicy.allowedModels), normalizedPolicy.dailyTokenLimit, normalizedPolicy.lifetimeTokenLimit, normalizedPolicy.expiresAt, updatedAt]);
+      merged.policy = { ...normalizedPolicy, updatedAt };
+    }
     result = merged;
   });
+  if (result && !result.policy) result.policy = await getApiKeyPolicy(id);
   return result;
 }
 

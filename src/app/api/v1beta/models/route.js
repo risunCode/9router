@@ -1,4 +1,8 @@
 import { PROVIDER_MODELS } from "@/shared/constants/models";
+import {
+  filterModelCatalog,
+  resolveModelsApiKeyPolicy,
+} from "../../v1/models/route.js";
 
 /**
  * Handle CORS preflight
@@ -17,8 +21,10 @@ export async function OPTIONS() {
  * GET /v1beta/models - Gemini compatible models list
  * Returns models in Gemini API format
  */
-export async function GET() {
+export async function GET(request) {
   try {
+    const auth = await resolveModelsApiKeyPolicy(request);
+    if (auth.response) return auth.response;
     const models = [];
     const seen = new Set();
 
@@ -54,7 +60,18 @@ export async function GET() {
       }
     }
 
-    return Response.json({ models });
+    const policyModels = models.map((model) => {
+      const modelId = model.name.slice("models/".length);
+      return {
+        ...model,
+        id: modelId.startsWith("gemini/") ? modelId : `gemini/${modelId}`,
+      };
+    });
+    const allowedNames = new Set(
+      filterModelCatalog(policyModels, auth.policy).map((model) => model.name),
+    );
+
+    return Response.json({ models: models.filter((model) => allowedNames.has(model.name)) });
   } catch (error) {
     console.log("Error fetching models:", error);
     return Response.json({ error: { message: error.message } }, { status: 500 });

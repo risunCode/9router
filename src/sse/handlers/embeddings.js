@@ -12,6 +12,7 @@ import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
+import { enforceApiKeyPolicy } from "../services/apiKeyPolicy.js";
 
 /**
  * Handle embeddings request for the SSE/Next.js server.
@@ -63,6 +64,13 @@ export async function handleEmbeddings(request) {
   if (!body.input) {
     log.warn("EMBEDDINGS", "Missing input");
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing required field: input");
+  }
+
+  const acl = await enforceApiKeyPolicy({ apiKey, model: modelStr, body, endpoint: url.pathname });
+  if (acl.error) {
+    const response = errorResponse(acl.error.status, acl.error.message);
+    if (acl.error.retryAfter) response.headers.set("Retry-After", String(acl.error.retryAfter));
+    return response;
   }
 
   const modelInfo = await getModelInfo(modelStr);

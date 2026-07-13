@@ -1,0 +1,119 @@
+# Implementation Plan
+
+- [x] 1. Add backward-compatible ACL schema and policy persistence
+  - [x] 1.1 Add migration and repository tests
+    - Cover fresh schema creation, migration from a v1 database, legacy unrestricted keys, policy normalization, invalid values, export/import round trip, and no raw-key disclosure in safe summaries.
+    - Use fake API keys and an isolated test database only.
+    - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 7.4, 8.1, 8.2, 8.6_
+  - [x] 1.2 Add ACL and quota ledger tables through an additive migration
+    - Bump `SCHEMA_VERSION` and add the versioned migration plus matching declarative schema definitions.
+    - Create `apiKeyAcl`, `apiKeyQuotaUsage`, `apiKeyLifetimeQuotaUsage`, and `apiKeyQuotaReservations` with foreign keys and indexes from the design.
+    - Preserve unrestricted behavior when no ACL row exists.
+    - Register the migration and verify it is idempotent across all supported SQLite adapters.
+    - _Requirements: 1.1, 1.3, 1.4, 1.5, 1.7, 1.8, 8.1_
+  - [x] 1.3 Implement policy persistence and safe API-key repository contracts
+    - Add normalized create/read/update/delete policy operations and safe quota-summary reads.
+    - Extend API key repository, DB barrel, local DB barrel, export/import, and legacy migration paths without exposing raw keys through summaries.
+    - Apply policy updates atomically; reject invalid patches before mutation.
+    - Make task 1.1 tests pass.
+    - _Requirements: 1.2, 1.6, 1.7, 1.8, 7.2, 7.3, 7.4, 7.5_
+
+- [x] 2. Implement atomic quota reservation and settlement
+  - [x] 2.1 Add focused quota ledger tests
+    - Cover unrestricted keys, daily limits, lifetime limits, output-ceiling reservation, input estimate fallback, actual usage lower/higher than reservation, no-usage interrupted streams, stale reservation cleanup, disabled/expired keys, and `Retry-After` calculation.
+    - Add concurrent-reservation tests proving requests sharing a key cannot claim the same remaining allowance.
+    - Assert all fixtures and error text omit fake key material.
+    - _Requirements: 2.1, 2.2, 2.5, 2.6, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9, 4.10, 8.3, 8.6_
+  - [x] 2.2 Implement durable preflight reservations
+    - Derive a bounded token estimate from protocol-specific output ceilings and the existing safe input estimator where available.
+    - In one SQLite transaction: reap expired reservations for the key, resolve active/expiry policy, check committed plus reserved counters, insert a reservation, and increment reserved counters.
+    - Return structured policy errors for disabled/expired key, daily exhaustion, and lifetime exhaustion.
+    - Make task 2.1 reservation tests pass.
+    - _Requirements: 2.1, 2.2, 2.5, 2.6, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.9_
+  - [x] 2.3 Implement actual-usage settlement and recovery
+    - Atomically delete the reservation, release reserved counters, commit actual canonical usage, and retain normal usage-history/daily aggregation semantics.
+    - Charge the reservation estimate conservatively when a stream ends without reliable usage.
+    - Add bounded lazy reaping of stale reservations and expose only safe reservation state in summaries.
+    - Make all task 2.1 settlement and recovery tests pass.
+    - _Requirements: 4.7, 4.8, 4.9, 4.10, 7.4, 8.3_
+
+- [x] 3. Build shared API-key policy evaluation
+  - [x] 3.1 Add pure model-policy tests
+    - Cover exact provider-qualified models, exact combo names, exact aliases, alias resolution, stale aliases/combos, empty allowlists, case sensitivity, and filtered model catalogs by kind.
+    - Cover key disabled and expiry behavior before any model or quota decision.
+    - _Requirements: 2.1, 2.2, 2.3, 2.5, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 8.3_
+  - [x] 3.2 Implement `apiKeyPolicy` service
+    - Create one shared service for resolving a key policy, normalizing policy input, model/combo/alias authorization, model catalog filtering, reservation, settlement, and policy error construction.
+    - Reuse current `resolveModelAlias`, combo resolution, model-list construction, error utilities, and server-local date helpers; do not duplicate their behavior.
+    - Keep raw API keys scoped to extraction/lookup and use key IDs thereafter.
+    - Make task 3.1 tests pass.
+    - _Requirements: 1.1, 2.1, 2.2, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 7.4, 7.6_
+
+- [x] 4. Enforce ACL policy in every protected inference path
+  - [x] 4.1 Add chat-family integration tests
+    - Cover OpenAI chat completions, Responses, Anthropic Messages, and Ollama with allowed/blocked model, expired key, daily quota exhaustion, lifetime exhaustion, pre-output denial, and no upstream credential selection on denial.
+    - Cover a permitted combo that falls back to an internal member without requiring members to be individually allowlisted.
+    - Verify a `devin/swe-1-6-slow`-only policy permits Devin and rejects another model.
+    - _Requirements: 3.1, 3.2, 3.3, 4.3, 4.4, 4.5, 5.1, 5.5, 8.3, 8.4_
+  - [x] 4.2 Integrate ACL into shared chat lifecycle and usage context
+    - Invoke the shared policy service after model parsing and before account selection/fallback.
+    - Carry reservation ID and safe key ID through streaming, non-streaming, forced SSE-to-JSON, and usage-settlement paths.
+    - Ensure post-output stream errors do not replay another provider/account because of ACL state.
+    - Make task 4.1 tests pass.
+    - _Requirements: 3.2, 4.3, 4.4, 4.5, 4.7, 4.8, 4.9, 5.1, 5.5_
+  - [x] 4.3 Add and implement non-chat endpoint coverage
+    - Add integration coverage and shared policy calls for embeddings, image generation, TTS, STT multipart, search, fetch, and Gemini native request paths.
+    - Enforce model restrictions for endpoints with a model/provider; reserve token quota only where reliable token usage is measurable.
+    - Preserve explicit no-inference endpoint exemptions and existing trusted local/CLI security semantics.
+    - _Requirements: 5.2, 5.3, 5.4, 5.5, 5.6, 8.4_
+
+- [x] 5. Filter model discovery and metadata per API key
+  - [x] 5.1 Add model endpoint policy tests
+    - Cover `/v1/models`, `/v1/models/{kind}`, model info, and Gemini model list for unrestricted, allowed-model, allowed-alias, allowed-combo, expired, and invalid key states.
+    - Assert disallowed models are absent rather than merely failing after discovery.
+    - _Requirements: 3.4, 3.5, 3.6, 3.7, 5.5, 8.4_
+  - [x] 5.2 Implement authenticated catalog filtering
+    - Authenticate/filter public model discovery through the shared policy service while preserving current behavior for unrestricted keys and trusted local dashboard access.
+    - Filter post-construction using existing catalog metadata; do not create a second provider-model catalog.
+    - Make task 5.1 tests pass.
+    - _Requirements: 3.4, 3.5, 3.6, 3.7, 5.5_
+
+- [x] 6. Expose policy management and monitoring APIs
+  - [x] 6.1 Add REST contract tests
+    - Test `POST /api/keys`, `GET /api/keys`, `GET /api/keys/{id}`, and `PUT /api/keys/{id}` with valid policy, invalid fields, atomic rejection, expired state, quota summaries, and creation-only secret visibility.
+    - Test export/import policy/counter preservation and verify history/stat APIs never return raw key material.
+    - _Requirements: 1.2, 1.6, 2.4, 6.3, 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 8.2_
+  - [x] 6.2 Implement validated policy CRUD and safe quota summaries
+    - Extend existing API key routes and repository calls instead of adding parallel administration endpoints.
+    - Return normalized policy and daily/lifetime committed/reserved/remaining summaries for key management.
+    - Preserve the secret only in the original creation response and preserve existing pause/delete semantics.
+    - Make task 6.1 tests pass.
+    - _Requirements: 1.2, 1.6, 2.4, 6.3, 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
+
+- [x] 7. Add API Key ACL dashboard controls and monitoring
+  - [x] 7.1 Add component behavior coverage
+    - Cover create/edit payloads, model multi-select, daily/lifetime fields, expiry input, validation-error retention, unlimited labels, active/expired/paused status, and safe quota bars.
+    - Assert the display never exposes full API key values in policy or usage content.
+    - _Requirements: 2.4, 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 7.4, 8.5, 8.6_
+  - [x] 7.2 Implement the reusable policy form and model selector wrapper
+    - Reuse existing `Input`, `Modal`, `Toggle`, `ModelSelectModal`, and quota-progress conventions.
+    - Create a small multi-select wrapper only where the existing selector lacks a controlled multi-value API; do not duplicate provider model discovery.
+    - Make task 7.1 form tests pass.
+    - _Requirements: 6.1, 6.2, 6.5, 6.6_
+  - [x] 7.3 Extend Endpoint/API Keys management UI
+    - Add policy inputs to create and edit modals, an edit action per key, policy status chips, daily/lifetime quota bars, expiry display, and API error feedback.
+    - Preserve current copy, mask, pause/resume, delete, responsive behavior, and secret visibility controls.
+    - Make all task 7.1 UI tests pass.
+    - _Requirements: 2.4, 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7_
+
+- [x] 8. Verify complete ACL delivery and document operational behavior
+  - [x] 8.1 Run focused ACL, auth, usage, model-list, and dashboard verification
+    - Run all new repository, ledger, policy, gateway, endpoint, REST, and UI tests.
+    - Run affected existing authentication, usage persistence, streaming, model resolver/list, provider, and API-key tests.
+    - Confirm test fixtures, output, snapshots, and logs contain no real key or provider credential.
+    - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6_
+  - [x] 8.2 Update custom runbook and run the production build
+    - Update root `AGENTS.md` with ACL data ownership, safe upstream merge conflicts, key handling, and focused verification commands.
+    - Run the production application build after focused checks pass and resolve only regressions introduced by ACL.
+    - Mark all Kiro tasks complete only after their linked behavior is implemented and verified.
+    - _Requirements: 8.7_

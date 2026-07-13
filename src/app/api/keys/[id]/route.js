@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteApiKey, getApiKeyById, updateApiKey } from "@/lib/localDb";
+import { getApiKeyPolicySummary } from "@/sse/services/apiKeyPolicy.js";
 
 // GET /api/keys/[id] - Get single key
 export async function GET(request, { params }) {
@@ -9,7 +10,7 @@ export async function GET(request, { params }) {
     if (!key) {
       return NextResponse.json({ error: "Key not found" }, { status: 404 });
     }
-    return NextResponse.json({ key });
+    return NextResponse.json({ key: { ...key, ...(await getApiKeyPolicySummary(key)) } });
   } catch (error) {
     console.log("Error fetching key:", error);
     return NextResponse.json({ error: "Failed to fetch key" }, { status: 500 });
@@ -21,7 +22,7 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { isActive } = body;
+    const { isActive, name, allowedModels, dailyTokenLimit, lifetimeTokenLimit, expiresAt } = body;
 
     const existing = await getApiKeyById(id);
     if (!existing) {
@@ -30,10 +31,21 @@ export async function PUT(request, { params }) {
 
     const updateData = {};
     if (isActive !== undefined) updateData.isActive = isActive;
+    if (name !== undefined) updateData.name = name;
+    if (allowedModels !== undefined || dailyTokenLimit !== undefined || lifetimeTokenLimit !== undefined || expiresAt !== undefined) {
+      const current = await getApiKeyPolicySummary(existing);
+      updateData.policy = {
+        ...current.policy,
+        ...(allowedModels !== undefined ? { allowedModels } : {}),
+        ...(dailyTokenLimit !== undefined ? { dailyTokenLimit } : {}),
+        ...(lifetimeTokenLimit !== undefined ? { lifetimeTokenLimit } : {}),
+        ...(expiresAt !== undefined ? { expiresAt } : {}),
+      };
+    }
 
     const updated = await updateApiKey(id, updateData);
 
-    return NextResponse.json({ key: updated });
+    return NextResponse.json({ key: { ...updated, ...(await getApiKeyPolicySummary(updated)) } });
   } catch (error) {
     console.log("Error updating key:", error);
     return NextResponse.json({ error: "Failed to update key" }, { status: 500 });
