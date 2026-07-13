@@ -44,6 +44,21 @@ describe("model test route kind routing", () => {
     global.fetch = originalFetch;
   });
 
+  it("uses the trusted internal token without injecting an API key", async () => {
+    const { POST } = await import("../../src/app/api/models/test/route.js");
+    const req = new Request("http://localhost/api/models/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "devin/swe-1-6-slow" }),
+    });
+
+    await POST(req);
+
+    const [, options] = global.fetch.mock.calls[0];
+    expect(options.headers).toMatchObject({ "x-9r-cli-token": "cli-token" });
+    expect(options.headers.Authorization).toBeUndefined();
+  });
+
   it("routes image model tests to /api/v1/images/generations", async () => {
     const { POST } = await import("../../src/app/api/models/test/route.js");
 

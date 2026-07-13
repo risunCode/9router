@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   enforceApiKeyPolicy: vi.fn(),
   extractApiKey: vi.fn(),
   isValidApiKey: vi.fn(),
+  isTrustedInternalRequest: vi.fn(),
   getProviderCredentials: vi.fn(),
   getSettings: vi.fn(),
   getModelInfo: vi.fn(),
@@ -21,6 +22,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/sse/services/auth.js", () => ({
   extractApiKey: mocks.extractApiKey,
   isValidApiKey: mocks.isValidApiKey,
+  isTrustedInternalRequest: mocks.isTrustedInternalRequest,
   getProviderCredentials: mocks.getProviderCredentials,
   clearAccountError: mocks.clearAccountError,
   markAccountUnavailable: mocks.markAccountUnavailable,
@@ -110,6 +112,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.extractApiKey.mockReturnValue(API_KEY);
   mocks.isValidApiKey.mockResolvedValue(true);
+  mocks.isTrustedInternalRequest.mockResolvedValue(false);
   mocks.getSettings.mockResolvedValue({ requireApiKey: true });
   mocks.getModelInfo.mockResolvedValue({ provider: "test", model: "model" });
   mocks.getComboModels.mockResolvedValue(null);
@@ -123,6 +126,15 @@ beforeEach(() => {
 });
 
 describe("API key ACL media handler enforcement", () => {
+  it("bypasses API-key ACL for a trusted internal probe", async () => {
+    mocks.isTrustedInternalRequest.mockResolvedValue(true);
+
+    await handleEmbeddings(jsonRequest("/v1/embeddings", { model: "test/model", input: "hello" }));
+
+    expect(mocks.enforceApiKeyPolicy).toHaveBeenCalledWith(expect.objectContaining({ apiKey: null }));
+    expect(mocks.handleEmbeddingsCore).toHaveBeenCalled();
+  });
+
   it.each(handlers)("rejects a denied model before $name routing", async ({ endpoint, core, request, run }) => {
     mocks.enforceApiKeyPolicy.mockResolvedValue({
       context: null,

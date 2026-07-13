@@ -4,6 +4,7 @@ import {
   clearAccountError,
   extractApiKey,
   isValidApiKey,
+  isTrustedInternalRequest,
 } from "../services/auth.js";
 import { getSettings } from "@/lib/localDb";
 import { getModelInfo } from "../services/model.js";
@@ -35,7 +36,8 @@ export async function handleEmbeddings(request) {
   log.request("POST", `${url.pathname} | ${modelStr}`);
 
   // Log API key (masked)
-  const apiKey = extractApiKey(request);
+  const isInternalRequest = await isTrustedInternalRequest(request);
+  const apiKey = isInternalRequest ? null : extractApiKey(request);
   if (apiKey) {
     log.debug("AUTH", `API Key: ${log.maskKey(apiKey)}`);
   } else {
@@ -44,7 +46,7 @@ export async function handleEmbeddings(request) {
 
   // Enforce API key if enabled in settings
   const settings = await getSettings();
-  if (settings.requireApiKey) {
+  if (settings.requireApiKey && !isInternalRequest) {
     if (!apiKey) {
       log.warn("AUTH", "Missing API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
