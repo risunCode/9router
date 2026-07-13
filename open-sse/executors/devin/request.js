@@ -14,19 +14,37 @@ function textFromContent(content) {
   return content.filter((part) => part?.type === "text").map((part) => part.text ?? "").join("");
 }
 
+function imageSourceFromPart(part) {
+  if (part?.type === "image_url") return typeof part.image_url === "string" ? part.image_url : part.image_url?.url;
+  if (part?.type !== "image") return "";
+  if (typeof part.url === "string") return part.url;
+  if (typeof part.source?.url === "string") return part.source.url;
+  const base64 = part.data ?? part.source?.data;
+  const mimeType = part.mimeType ?? part.media_type ?? part.source?.media_type ?? part.source?.mimeType;
+  if (typeof base64 === "string" && typeof mimeType === "string") return `data:${mimeType};base64,${base64}`;
+  return "";
+}
+
+function normalizeImageMime(mimeType) {
+  return String(mimeType || "").toLowerCase() === "image/jpg" ? "image/jpeg" : String(mimeType || "").toLowerCase();
+}
+
 async function imagesFromContent(content, signal) {
   if (!Array.isArray(content)) return [];
   const images = [];
   for (const part of content) {
-    if (part?.type !== "image_url") continue;
-    const source = typeof part.image_url === "string" ? part.image_url : part.image_url?.url;
+    const source = imageSourceFromPart(part);
+    if (!source) continue;
     let parsed = parseDataUri(source);
-    if (!parsed && /^https?:\/\//i.test(source ?? "")) {
+    if (!parsed && /^https?:\/\//i.test(source)) {
       const fetched = await fetchImageAsBase64(source, { signal });
       parsed = fetched ? parseDataUri(fetched.url) : null;
     }
-    if (!parsed || !/^image\/(?:png|jpeg|gif|webp)$/i.test(parsed.mimeType)) throw new Error("Unsupported or unsafe Devin image input");
-    images.push(create(ImageDataSchema, { base64Data: parsed.base64.replace(/\s+/g, ""), mimeType: parsed.mimeType }));
+    const mimeType = normalizeImageMime(parsed?.mimeType);
+    if (!parsed || !/^image\/(?:png|jpeg|gif|webp)$/i.test(mimeType)) {
+      throw Object.assign(new Error("Unsupported or unsafe Devin image input"), { status: 400, clientError: true, retryable: false });
+    }
+    images.push(create(ImageDataSchema, { base64Data: parsed.base64.replace(/\s+/g, ""), mimeType }));
   }
   return images;
 }

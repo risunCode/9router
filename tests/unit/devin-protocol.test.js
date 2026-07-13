@@ -52,6 +52,31 @@ describe("Devin request adapter", () => {
     expect(request.chatMessagePrompts[2].source).toBe(ChatMessageSource.TOOL);
     expect(request.tools[0].name).toBe("inspect");
   });
+
+  it("accepts image/jpg data URIs and generic image blocks", async () => {
+    const { request } = await buildDevinRequest({
+      model: DEVIN_MODEL_ID, apiKey: "devin-session-token$fake", userJwt: "fake-user-jwt",
+      body: {
+        messages: [{
+          role: "user",
+          content: [
+            { type: "image_url", image_url: { url: "data:image/jpg;base64,/9j/4AAQSkZJRg==" } },
+            { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" },
+          ],
+        }],
+      },
+    });
+    expect(request.chatMessagePrompts[0].images).toHaveLength(2);
+    expect(request.chatMessagePrompts[0].images[0].mimeType).toBe("image/jpeg");
+    expect(request.chatMessagePrompts[0].images[1].mimeType).toBe("image/png");
+  });
+
+  it("classifies unsafe Devin image input as a client error", async () => {
+    await expect(buildDevinRequest({
+      model: DEVIN_MODEL_ID, apiKey: "devin-session-token$fake", userJwt: "fake-user-jwt",
+      body: { messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: "file:///etc/passwd" } }] }] },
+    })).rejects.toMatchObject({ status: 400, clientError: true });
+  });
 });
 
 describe("Devin pre-output probe", () => {
