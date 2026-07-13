@@ -48,12 +48,27 @@ A token pasted into source code, tests, fixtures, snapshots, logs, issue text, o
 | Executor entry point | `open-sse/executors/devin.js` | Owns one selected credential only; never selects/retries another account. |
 | Protocol/auth/framing | `open-sse/executors/devin/protocol.js` | Connect framing, gzip, auth exchange, token normalization, safe frame cap. |
 | Request translation | `open-sse/executors/devin/request.js` | Canonical OpenAI body to protobuf: text, images, tools, assistant tool calls, and tool results. Reuse 9router image helpers. |
-| Response translation | `open-sse/executors/devin/response.js` | Protobuf frames to canonical OpenAI SSE. Preserve tool-call IDs/indexes, reasoning, usage, finish reason, and `[DONE]`. |
+| Response translation | `open-sse/executors/devin/response.js` | Protobuf frames to canonical OpenAI SSE. Preserve tool-call IDs/indexes, active tool-call continuation, reasoning, usage, finish reason, and `[DONE]`. |
 | Error classification | `open-sse/executors/devin/errors.js` | Shared HTTP/trailer classifier and credential sanitization. |
 | Generated bindings | `open-sse/executors/devin/proto/` | Generated code. Do not hand-edit. Replace the dependency closure atomically from the verified source when the upstream protobuf schema changes. |
 | Icon | `public/providers/devin.png` | Devin visual identity sourced from OmniRouter's Lobe `Devin` icon reference; do not substitute Cursor, Windsurf, or a terminal icon. |
 | Tests | `tests/unit/devin-*.test.js` | All credentials and upstream I/O must be fake/mocked. |
 | Specification | `.kiro/specs/devin-provider/` | Requirements, design, and verified task history. Update it with material design changes. |
+
+### Tool-call streaming contract
+
+Devin tool calls are provider-native streamed deltas. 9router's job is to translate those deltas into OpenAI-compatible SSE; it must not execute tools server-side.
+
+- Request translation must send OpenAI `tools`, assistant `tool_calls`, and `role: "tool"` results into Devin `ChatToolDefinition`, `ChatToolCall`, and `ChatMessageSource.TOOL` frames.
+- Response translation must preserve a stable OpenAI `tool_calls[index]` for each Devin tool call ID.
+- Devin may stream argument-only deltas with an empty `name` and sometimes an empty/missing `id`. Treat those as continuations of the last active tool call, matching the OMP direct-API pattern `tc.id || activeToolCallId`.
+- Devin may stream either incremental argument chunks or full accumulated JSON prefixes. Track per-tool partial JSON and emit only the new suffix to OpenAI clients; never duplicate already-emitted argument bytes.
+- Reject only a brand-new tool call that has neither a known/active ID nor a non-empty function name. Do not forward `function.name: ""` for a new OpenAI tool call.
+- A client-side tool executor is responsible for applying streamed tool calls to a workspace. The hosted 9router API only emits the tool call stream.
+
+### Reference implementation boundaries
+
+Use `DevinRouter/z-references/oh-my-pi-main/packages/ai/src/providers/devin.ts` as the closest direct API contract for Devin streaming, prompt replay, and tool-call delta accumulation. Do **not** copy OmniRoute's Devin CLI/ACP subprocess path: `devin acp` summarizer mode is pure-text and intentionally does not represent the 9router Devin integration.
 
 ### Error and failover policy
 
@@ -176,7 +191,8 @@ The first two commands intentionally rewrite snapshots. Review their diff: expec
 npx vitest run \
   tests/unit/devin-errors.test.js \
   tests/unit/devin-protocol.test.js \
-  tests/unit/devin-integration.test.js
+  tests/unit/devin-integration.test.js \
+  tests/unit/api-key-acl-model-routes.test.js
 
 npx vitest run \
   tests/unit/modality-strip.test.js \
