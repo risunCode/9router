@@ -96,6 +96,7 @@ export const MODEL_CAPABILITIES = {
   // Qwen plain coder/text (no vision) — registry "vision-model" / "coder-model" aliases
   "vision-model":      { vision: true, reasoning: true, thinkingFormat: "qwen", contextWindow: 1000000 },
   "coder-model":       { reasoning: true, thinkingFormat: "qwen", contextWindow: 1000000 },
+  "swe-1-6-slow":      { vision: true, reasoning: true, tools: true, contextWindow: 200000, maxOutput: 64000 },
 };
 
 /**

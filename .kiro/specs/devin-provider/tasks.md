@@ -1,0 +1,162 @@
+# Implementation Plan
+
+- [x] 1. Establish the Devin provider registry contract
+  - [x] 1.1 Add focused registry and capability tests
+    - Assert the provider ID and alias resolve through the generated registry.
+    - Assert the credential form requires only one API-key/session-token value.
+    - Assert the exact static model ID is `swe-1-6-slow` with a 200,000-token context window.
+    - Assert model capability resolution preserves image input and tool/thinking support required by the design.
+    - Use only fake credential values.
+    - _Requirements: 1.1, 1.4, 1.6, 2.1, 2.2, 2.3, 9.1, 9.6_
+  - [x] 1.2 Add the Devin registry entry and executor registration shell
+    - Create `open-sse/providers/registry/devin.js` using the repository registry schema and API-key credential convention.
+    - Set the provider to force upstream streaming while retaining existing client streaming/non-streaming behavior.
+    - Add `DevinExecutor` registration and export in `open-sse/executors/index.js` without adding provider behavior yet.
+    - Regenerate `open-sse/providers/registry/index.js` with the repository generator rather than hand-maintaining a second registry source.
+    - Make the tests from task 1.1 pass.
+    - _Requirements: 1.1, 1.4, 1.6, 2.1, 2.2, 5.6, 9.1_
+  - [x] 1.3 Add the Devin provider icon sourced from OmniRouter
+    - Use the Devin Lobe provider icon referenced by `D:/MyGitRepository/Community/DevinRouter/z-references/OmniRoute-3.8.46/src/shared/components/lobeProviderIcons.ts` (`devin: "Devin"`).
+    - Export/copy that same visual identity as `public/providers/devin.png`; do not substitute the Windsurf, Cursor, terminal, or generated text fallback icon.
+    - Verify the registry/UI path resolves the PNG and the asset is a valid non-empty PNG.
+    - _Requirements: 9.1_
+
+- [x] 2. Introduce isolated Devin protobuf support
+  - [x] 2.1 Add the generated protobuf dependency closure
+    - Copy only the generated modules required by `GetUserJwtRequest/Response`, `GetChatMessageRequest/Response`, `ChatMessagePrompt`, `ChatToolDefinition`, `ChatToolChoice`, `ImageData`, `ChatToolCall`, metadata, configuration, usage, and stop reasons.
+    - Preserve generated imports and generated-code headers; do not edit generated message definitions.
+    - Add the minimum protobuf runtime dependency already proven by DevinRouter.
+    - Exclude only generated files from lint/format if existing project configuration requires it.
+    - Add a focused import/round-trip smoke test proving the bindings load and encode/decode under 9router's Node runtime.
+    - _Requirements: 3.3, 3.4, 9.3_
+  - [x] 2.2 Create protocol constants and safe token normalization tests
+    - Add failing tests for raw tokens, one prefix, repeated prefixes, surrounding whitespace, and empty input.
+    - Centralize API URL, auth/chat paths, compatibility versions, token prefix, and maximum Connect payload size.
+    - Implement normalization that emits exactly one `devin-session-token$` prefix and rejects an empty token before network I/O.
+    - Add leak assertions ensuring errors do not include the fake raw token.
+    - _Requirements: 1.2, 1.3, 1.5, 3.6, 7.5, 7.6, 9.2, 9.6_
+
+- [x] 3. Implement authentication exchange and Connect framing
+  - [x] 3.1 Add auth exchange coverage
+    - Mock plain-protobuf and gzip-protobuf `GetUserJwt` responses.
+    - Cover a valid custom API server URL, missing user JWT, invalid/non-HTTPS custom URL, HTTP 401/403, malformed payload, abort, and oversized auth payload.
+    - Assert both default and custom endpoints use 9router's proxy-aware fetch and request signal.
+    - Assert no auth response, error, or log exposes the supplied session token or exchanged JWT.
+    - _Requirements: 3.1, 3.2, 3.6, 3.7, 7.1, 7.5, 7.6, 9.3, 9.6_
+  - [x] 3.2 Implement the request-local Devin auth exchange
+    - Encode `GetUserJwtRequest`, normalize the selected connection credential, and execute the bounded request through proxy-aware fetch.
+    - Decode plain or gzip responses without persisting the short-lived user JWT.
+    - Validate a custom API server URL before using it for chat transport.
+    - Return sanitized typed/classified failures consumable by the executor.
+    - Make task 3.1 tests pass.
+    - _Requirements: 3.1, 3.2, 3.6, 3.7, 7.1, 7.5, 7.6_
+  - [x] 3.3 Implement Connect data-frame helpers
+    - Test byte-zero flags, four-byte big-endian length, compressed and uncompressed payloads, exact boundary sizes, oversized lengths, multiple frames per chunk, split headers, split payloads, truncated terminal frames, and trailers.
+    - Implement pure frame encoding and an incremental bounded decoder with no unbounded preallocation.
+    - Propagate abort/cancellation to the active reader and upstream request.
+    - _Requirements: 3.4, 3.5, 3.6, 3.7, 5.7, 7.2, 7.5, 9.3_
+
+- [x] 4. Build the canonical OpenAI-to-Devin request adapter
+  - [x] 4.1 Add text, roles, and generation-configuration coverage
+    - Decode the produced protobuf and assert system/developer instructions, ordered user/assistant history, conversation IDs, exact model UID, temperature, max output tokens, stop sequences, metadata, and prompt-cache defaults.
+    - Assert client-provided supported values win over defaults.
+    - Assert unsupported models and invalid request shapes fail before auth/chat network requests and do not request account fallback.
+    - _Requirements: 2.2, 2.6, 3.3, 4.1, 4.2, 4.6, 6.6, 7.5, 9.3, 9.5_
+  - [x] 4.2 Implement text/history and generation mapping
+    - Convert the canonical OpenAI request body into `GetChatMessageRequest` and `ChatMessagePrompt` entries.
+    - Preserve message order and supported generation values while stripping or rejecting unsupported fields according to existing executor conventions.
+    - Validate `swe-1-6-slow` before performing auth exchange.
+    - Make task 4.1 tests pass.
+    - _Requirements: 2.1, 2.2, 2.6, 3.3, 4.1, 4.2, 4.6, 6.6_
+  - [x] 4.3 Add image request tests and implementation
+    - Test a canonical OpenAI data-URI image and a mocked remote image handled through 9router's existing SSRF-hardened image helper.
+    - Assert decoded `ChatMessagePrompt.images` contains the expected validated MIME type and base64 data.
+    - Assert text and multiple image blocks remain associated with the correct user message.
+    - Reject unsafe URLs, unsupported MIME types, invalid base64, and oversized images through existing safety behavior.
+    - Do not add a second unrestricted image fetcher.
+    - _Requirements: 2.3, 4.4, 4.5, 9.4_
+  - [x] 4.4 Add tools and tool-history tests and implementation
+    - Test function definitions, JSON schema parameters, supported tool choice, assistant text plus tool calls, multiple tool calls, role-tool results, stable `tool_call_id`, and error tool results where represented canonically.
+    - Decode protobuf and assert `ChatToolDefinition`, `ChatMessagePrompt.toolCalls`, `ChatMessageSource.TOOL`, `toolCallId`, and `toolResultIsError` rather than inspecting source text.
+    - Reuse canonical OpenAI/Anthropic conversion output and do not introduce endpoint-specific duplicate converters.
+    - _Requirements: 4.1, 4.2, 4.3, 4.5, 9.4_
+
+- [x] 5. Convert Devin response frames into canonical OpenAI SSE
+  - [x] 5.1 Add response adapter coverage
+    - Cover text deltas, reasoning deltas, empty deltas, usage, normal stop, max-token stop, and final `[DONE]`.
+    - Cover one and multiple/interleaved tool calls and assert stable tool index, ID, name, and argument continuation.
+    - Cover compressed data frames, Connect success trailers, Connect error trailers, malformed protobuf, and unknown legal protobuf fields.
+    - Assert emitted events are valid input for existing OpenAI-to-Anthropic response translation.
+    - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 7.2, 7.5, 9.3, 9.4_
+  - [x] 5.2 Implement the stateful response-to-SSE adapter
+    - Convert protobuf deltas to canonical OpenAI SSE events using one per-stream state object.
+    - Maintain an ID-to-index map for tool calls and emit identity fields consistently.
+    - Map usage and stop reasons exactly, emit one terminal completion and one `[DONE]`, and avoid empty valuable-content events.
+    - Convert terminal/trailer failures through the shared Devin classifier.
+    - Make task 5.1 tests pass.
+    - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 7.2, 7.5_
+  - [x] 5.3 Prove non-streaming and Anthropic compatibility through existing handlers
+    - Add focused integration tests that run canonical Devin SSE through the existing non-streaming assembly path.
+    - Add focused integration tests that translate the same stream to the Anthropic endpoint response contract.
+    - Cover text, reasoning, tool calls, usage, and finish reason without adding Devin-specific non-streaming/Anthropic assemblers.
+    - _Requirements: 4.1, 4.2, 4.5, 5.6, 9.4_
+
+- [x] 6. Complete the DevinExecutor transport lifecycle
+  - [x] 6.1 Add executor orchestration coverage
+    - Mock auth and chat fetches and assert one selected credential is used per executor invocation.
+    - Assert auth precedes chat, custom API server routing is honored, request signal and proxy options reach both calls, and the returned value follows the `BaseExecutor.execute()` response contract.
+    - Assert client `stream: false` still uses the upstream stream while existing 9router handlers return a non-streaming client response.
+    - Assert no subprocess APIs are invoked.
+    - _Requirements: 1.1, 1.4, 1.6, 3.1, 3.2, 3.7, 3.8, 5.6, 9.3_
+  - [x] 6.2 Implement and register the complete DevinExecutor
+    - Orchestrate model validation, auth exchange, protobuf request construction, Connect chat fetch, incremental decoding, and canonical SSE response creation.
+    - Return the standard `{ response, url, headers, transformedBody }` executor shape with sanitized diagnostic metadata.
+    - Leave account selection and connection-state mutation outside the executor.
+    - Make task 6.1 and prior protocol/adapter tests pass.
+    - _Requirements: 1.4, 1.6, 3.1, 3.2, 3.3, 3.4, 3.5, 3.7, 3.8, 5.1, 5.7_
+
+- [x] 7. Integrate Devin-specific fallback without duplicating pooling
+  - [x] 7.1 Add error-classification and false-positive tests
+    - Test temporary account/message rate-limit wording, explicit quota/usage-limit/credit exhaustion, generic 429, model capacity, overloaded/resource exhaustion, auth failure, unsupported model, validation error, server error, network error, malformed body, and Connect trailer equivalents.
+    - Assert generic 429/capacity is not definitive quota and unsupported model does not trigger account cycling.
+    - Assert every client/log message is sanitized against fake token and fake user-JWT values.
+    - _Requirements: 6.2, 6.3, 6.4, 6.5, 6.6, 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 9.5, 9.6_
+  - [x] 7.2 Implement conservative shared Devin error classification
+    - Use the same classifier for HTTP failures and Connect trailer failures.
+    - Expose sanitized status/code/message evidence compatible with `checkFallbackError()`.
+    - Add Devin-specific `errorConfig.js` rules only if focused tests prove generic rules cannot express the required distinction.
+    - Use existing account/model cooldown state; never permanently delete or disable a connection in the executor.
+    - _Requirements: 6.2, 6.3, 6.4, 6.5, 6.6, 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
+  - [x] 7.3 Enforce the pre-output retry boundary
+    - Add integration tests proving temporary limit and explicit quota can fall back before valuable output.
+    - Add tests proving text, reasoning, or tool-call output followed by an upstream error does not replay on another connection.
+    - Assert executor and account fallback attempts remain bounded and use native 9router credential rotation.
+    - Implement the minimum stream-state/error propagation changes needed to satisfy those observable contracts; do not add a Devin-specific pool or retry loop.
+    - _Requirements: 6.1, 6.2, 6.3, 6.7, 6.8, 6.9, 9.5_
+
+- [x] 8. Evaluate optional live model discovery
+  - [x] 8.1 Evaluate the discovery boundary (static-only retained)
+    - Confirm whether the existing Devin discovery protobuf dependency closure can be added without a second credential-selection implementation.
+    - Add a resolver contract test for valid non-empty results, malformed entries, unauthorized/error responses, empty results, timeout, and canonical static fallback.
+    - Assert discovery failure does not mark the connection unavailable and no user JWT enters cache or response data.
+    - If this boundary cannot be met cleanly, document the decision in the design and retain static-only `swe-1-6-slow`; task 8.2 is then not required.
+    - _Requirements: 2.4, 2.5, 8.1, 8.2, 8.3, 8.4, 8.5_
+  - [x] 8.2 Not required: static-only avoids a duplicate credential-selection path
+    - Integrate with the existing provider-model route and cache conventions.
+    - Validate discovered identifiers and merge/fallback according to existing resolver behavior.
+    - Keep `swe-1-6-slow` available whenever discovery is unavailable, malformed, unauthorized, timed out, or empty.
+    - _Requirements: 2.4, 2.5, 8.1, 8.2, 8.3, 8.4_
+
+- [x] 9. Verify the complete provider end to end
+  - [x] 9.1 Run focused Devin and affected integration verification
+    - Run all Devin protocol, request, response, executor, fallback, image, tool, non-streaming, and Anthropic compatibility tests.
+    - Run affected account-fallback and modality/translator tests.
+    - Run provider registry and alias baseline checks.
+    - Confirm fixtures, snapshots, logs, and committed files contain no real Devin credential or exchanged JWT.
+    - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 9.6_
+  - [x] 9.2 Run the application build and resolve integration regressions
+    - Run the repository application build after focused tests pass.
+    - Fix only regressions introduced by the Devin integration.
+    - Verify provider setup exposes one token field, the Devin icon, `swe-1-6-slow`, and image capability through existing UI/API contracts.
+    - Mark Kiro tasks complete only after their linked behavior is implemented and verified.
+    - _Requirements: 1.1, 2.1, 2.3, 9.7_
