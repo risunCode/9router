@@ -10,9 +10,34 @@ function selectedToken(credentials) {
   return credentials?.apiKey ?? credentials?.accessToken ?? credentials?.providerSpecificData?.apiKey ?? "";
 }
 
+function parseDevinResetMs(message) {
+  const match = String(message || "").match(/resets?\s+in:\s*(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/i);
+  if (!match) return null;
+  const hours = Number(match[1] || 0);
+  const minutes = Number(match[2] || 0);
+  const seconds = Number(match[3] || 0);
+  const totalMs = ((hours * 60 + minutes) * 60 + seconds) * 1000;
+  return totalMs > 0 ? totalMs : null;
+}
+
 export class DevinExecutor extends BaseExecutor {
   constructor() {
     super("devin", PROVIDERS.devin);
+  }
+
+  parseError(response, bodyText) {
+    let message = bodyText;
+    try {
+      const parsed = JSON.parse(bodyText);
+      message = parsed.error?.message || parsed.message || bodyText;
+    } catch { }
+    const failure = toDevinFallbackError({ status: response.status, message });
+    const resetMs = parseDevinResetMs(message);
+    return {
+      status: failure.clientError ? 400 : response.status,
+      message: failure.message || message,
+      resetsAtMs: resetMs ? Date.now() + resetMs : undefined,
+    };
   }
 
   async execute({ model, body, credentials, signal, proxyOptions = null }) {

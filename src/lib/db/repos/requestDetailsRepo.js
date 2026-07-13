@@ -61,11 +61,12 @@ function generateDetailId(model) {
 }
 
 function truncateField(obj, maxSize) {
-  const str = JSON.stringify(obj || {});
+  const value = obj || {};
+  const str = stringifyJson(value);
   if (str.length > maxSize) {
     return { _truncated: true, _originalSize: str.length, _preview: str.substring(0, 200) };
   }
-  return obj || {};
+  return value;
 }
 
 async function flushToDatabase() {

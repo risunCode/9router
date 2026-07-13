@@ -20,6 +20,17 @@ describe("Devin provider integration", () => {
     expect(getExecutor("devin").getProvider()).toBe("devin");
   });
 
+  it("parses Devin resets-in hints into precise cooldown timestamps", () => {
+    const executor = getExecutor("devin");
+    const parsed = executor.parseError(
+      new Response(JSON.stringify({ error: { message: "Reached message rate limit for this model. Please try again later. Resets in: 30m0s" } }), { status: 429 }),
+      JSON.stringify({ error: { message: "Reached message rate limit for this model. Please try again later. Resets in: 30m0s" } }),
+    );
+    expect(parsed.status).toBe(429);
+    expect(parsed.message).toContain("Reached message rate limit");
+    expect(parsed.resetsAtMs).toBeGreaterThan(Date.now() + 29 * 60 * 1000);
+  });
+
   it("rejects an unsupported model as a client error before transport", async () => {
     const executor = getExecutor("devin");
     await expect(executor.execute({ model: "unsupported", body: { messages: [{ role: "user", content: "hi" }] }, credentials: { apiKey: "fake" } })).rejects.toMatchObject({ clientError: true, retryable: false });

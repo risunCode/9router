@@ -82,6 +82,20 @@ describe("request details — tab crash-risk cases", () => {
     expect(res.pagination.pageSize).toBe(9999);
   });
 
+  it("BigInt fields → stored as strings without crashing observability", async () => {
+    await saveDetail({
+      id: "bigint-1", provider: "devin", model: "swe-1-6-slow",
+      status: "FAILED 429", tokens: { prompt_tokens: 1n },
+      providerRequest: { configuration: { maxTokens: 64000n } },
+      response: { content: "rate limit" },
+    });
+
+    const got = await db.getRequestDetailById("bigint-1");
+    expect(got.tokens.prompt_tokens).toBe("1");
+    expect(got.providerRequest.configuration.maxTokens).toBe("64000");
+    expect(() => JSON.stringify(got)).not.toThrow();
+  });
+
   it("oversized field → stored truncated + reparseable (no circular)", async () => {
     const huge = "x".repeat(20 * 1024);
     await saveDetail({

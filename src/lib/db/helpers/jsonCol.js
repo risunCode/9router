@@ -4,6 +4,10 @@ export function parseJson(str, fallback = null) {
   try { return JSON.parse(str); } catch { return fallback; }
 }
 
+export function jsonReplacer(_key, value) {
+  return typeof value === "bigint" ? value.toString() : value;
+}
+
 export function stringifyJson(value) {
-  return JSON.stringify(value ?? null);
+  return JSON.stringify(value ?? null, jsonReplacer);
 }
