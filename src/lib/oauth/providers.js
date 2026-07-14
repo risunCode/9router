@@ -1090,18 +1090,14 @@ const PROVIDERS = {
      * Returns immediately; the route handler decides pending/success/error.
      */
     pollToken: async (config, uuid, verifier) => {
-      const res = await fetch(`${config.pollUrl}?uuid=${uuid}&verifier=${verifier}`);
-      const responseText = await res.text();
+      const pollUrl = new URL(config.pollUrl);
+      pollUrl.search = new URLSearchParams({ uuid, verifier }).toString();
+      const res = await fetch(pollUrl);
       if (res.status === 404) {
         return { ok: false, data: { error: "authorization_pending" } };
       }
       if (res.ok) {
-        let data;
-        try {
-          data = JSON.parse(responseText);
-        } catch {
-          return { ok: false, data: { error: "protocol_error", error_description: "Cursor returned a non-JSON token response" } };
-        }
+        const data = await res.json();
         if (data.accessToken) {
           return {
             ok: true,
@@ -1113,11 +1109,10 @@ const PROVIDERS = {
         }
         return { ok: false, data: { error: "authorization_pending" } };
       }
-      const detail = responseText.replace(/[\r\n]+/g, " ").slice(0, 240);
       if (res.status >= 500) {
-        return { ok: false, data: { error: "server_error", error_description: `Upstream returned HTTP ${res.status}: ${detail}` } };
+        return { ok: false, data: { error: "server_error", error_description: `Upstream returned HTTP ${res.status}` } };
       }
-      return { ok: false, data: { error: "access_denied", error_description: `Cursor CLI poll returned HTTP ${res.status}: ${detail}` } };
+      return { ok: false, data: { error: "access_denied", error_description: `Cursor CLI poll returned HTTP ${res.status}` } };
     },
     mapTokens: (tokens) => ({
       accessToken: tokens.access_token,
