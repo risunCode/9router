@@ -20,7 +20,6 @@ import {
   KIRO_CONFIG,
   assertValidAwsRegion,
   CURSOR_CONFIG,
-  CURSOR_CLI_CONFIG,
   KIMI_CODING_CONFIG,
   KILOCODE_CONFIG,
   CLINE_CONFIG,
@@ -1068,64 +1067,6 @@ const PROVIDERS = {
       providerSpecificData: {
         machineId: tokens.machineId,
         authMethod: "imported",
-      },
-    }),
-  },
-
-  "cursor-cli": {
-    config: CURSOR_CLI_CONFIG,
-    flowType: "authorization_code_pkce",
-    buildAuthUrl: (config, redirectUri, state, codeChallenge) => {
-      const uuid = crypto.randomUUID();
-      const params = new URLSearchParams({
-        challenge: codeChallenge,
-        uuid,
-        mode: "login",
-        redirectTarget: "cli",
-      });
-      // Store uuid+verifier needed for polling (attached to state for retrieval later)
-      const url = `${config.loginUrl}?${params.toString()}`;
-      return url;
-    },
-    /**
-     * Override standard PKCE exchange to use Cursor CLI polling instead of
-     * a local redirect callback. codeVerifier doubles as the PKCE verifier.
-     */
-    exchangeToken: async (config, code, redirectUri, codeVerifier, state) => {
-      // Cursor CLI doesn't use a redirect-based code exchange.
-      // We poll the auth endpoint using the PKCE verifier + UUID from state.
-      const searchParams = new URL(redirectUri || "http://localhost", "http://localhost").searchParams;
-      const uuid = searchParams.get("uuid") || state;
-
-      let delay = 1000;
-      for (let attempt = 0; attempt < 150; attempt++) {
-        await new Promise((r) => setTimeout(r, delay));
-        try {
-          const res = await fetch(`${config.pollUrl}?uuid=${uuid}&verifier=${codeVerifier}`);
-          if (res.status === 404) {
-            delay = Math.min(delay * 1.2, 10000);
-            continue;
-          }
-          if (res.ok) {
-            const data = await res.json();
-            if (!data.accessToken) throw new Error("No access token in poll response");
-            return { accessToken: data.accessToken, refreshToken: data.refreshToken };
-          }
-          throw new Error(`Cursor CLI poll failed: HTTP ${res.status}`);
-        } catch (e) {
-          if (e.message?.startsWith("Cursor CLI poll failed")) throw e;
-          if (e.message?.startsWith("No access token")) throw e;
-        }
-      }
-      throw new Error("Cursor CLI authentication timeout");
-    },
-    mapTokens: (tokens) => ({
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken || null,
-      expiresIn: 86400,
-      providerSpecificData: {
-        clientVersion: CURSOR_CLI_CONFIG.clientVersion,
-        ghostMode: true,
       },
     }),
   },
