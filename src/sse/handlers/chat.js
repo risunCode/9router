@@ -90,10 +90,7 @@ export async function handleChat(request, clientRawRequest = null) {
     if (acl.error.retryAfter) response.headers.set("Retry-After", String(acl.error.retryAfter));
     return response;
   }
-  const aclContext = acl.context;
-  // Strip internal _apiKeyAcl field — Mistral and other strict providers reject it.
-  // Settlement uses aclContext from the closure after the response comes back.
-  delete body._apiKeyAcl;
+  body._apiKeyAcl = acl.context;
 
   // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots
   const userAgent = request?.headers?.get("user-agent") || "";
@@ -271,7 +268,6 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       providerThinking,
       // Detect source format by endpoint + body
       sourceFormatOverride: request?.url ? detectFormatByEndpoint(new URL(request.url).pathname, body) : null,
-      aclContext,
       onCredentialsRefreshed: async (newCreds) => {
         await updateProviderCredentials(credentials.connectionId, {
           ...newCreds,
