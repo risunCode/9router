@@ -89,9 +89,6 @@ export const CURSOR_CONFIG = {
   },
 };
 
-// Cursor CLI OAuth Configuration (PKCE + polling for Agent API)
-export const CURSOR_CLI_CONFIG = { ...PROVIDER_OAUTH["cursor-cli"] };
-
 // Kimi Coding OAuth Configuration (Device Code Flow)
 // clientId uses env override — dynamic, not stored in registry
 export const KIMI_CODING_CONFIG = {
@@ -137,7 +134,6 @@ export const PROVIDERS = {
   GITHUB: "github",
   KIRO: "kiro",
   CURSOR: "cursor",
-  CURSOR_CLI: "cursor-cli",
   KIMI_CODING: "kimi-coding",
   KILOCODE: "kilocode",
   CLINE: "cline",
