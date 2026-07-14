@@ -200,6 +200,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
 
       // ── Cursor CLI polling flow ──────────────────────────────────────
       if (provider === "cursor-cli") {
+        setIsDeviceCode(true);
         setStep("waiting");
 
         // Get the auth URL + PKCE verifier
@@ -209,14 +210,15 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
 
-        const loginUrlObj = new URL(data.authUrl);
-        const uuid = loginUrlObj.searchParams.get("uuid");
+        // Extract UUID from the auth URL (cursor.com/loginDeepControl?challenge=...&uuid=...)
+        const loginUrl = new URL(data.authUrl);
+        const uuid = loginUrl.searchParams.get("uuid");
         if (!uuid) throw new Error("No UUID in Cursor CLI auth URL");
 
         // Open login page in browser
         window.open(data.authUrl, "_blank", "noopener,noreferrer");
 
-        // Start Cursor CLI polling
+        // Poll using the Cursor CLI polling endpoint
         startCursorCliPolling(uuid, data.codeVerifier);
         return;
       }
@@ -618,22 +620,8 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   return (
     <Modal isOpen={isOpen} title={modalTitle} onClose={handleClose} size="lg">
       <div className="flex flex-col gap-4">
-        {/* Cursor CLI polling flow */}
-        {step === "waiting" && provider === "cursor-cli" && (
-          <div className="flex flex-col items-center gap-3 py-6">
-            <span className="material-symbols-outlined text-3xl text-primary animate-spin">
-              progress_activity
-            </span>
-            <p className="text-sm text-text-muted text-center">
-              Login to Cursor CLI in the opened browser tab.
-              <br />
-              Waiting for authorization…
-            </p>
-          </div>
-        )}
-
         {/* Waiting + Manual Input combined (non-device-code) */}
-        {(step === "waiting" || step === "input") && !isDeviceCode && provider !== "cursor-cli" && (
+        {(step === "waiting" || step === "input") && !isDeviceCode && (
           <>
             {/* Option A: Auto via popup */}
             <div className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg bg-sidebar/50">
