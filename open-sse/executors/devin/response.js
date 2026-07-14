@@ -151,7 +151,12 @@ export function createDevinSseResponse(response, model) {
             if (message.usage) {
               const prompt_tokens = Number(message.usage.inputTokens);
               const completion_tokens = Number(message.usage.outputTokens);
-              controller.enqueue(sse(JSON.stringify({ id: `chatcmpl-${crypto.randomUUID()}`, object: "chat.completion.chunk", model, choices: [], usage: { prompt_tokens, completion_tokens, total_tokens: prompt_tokens + completion_tokens } })));
+              const cached_tokens = Number(message.usage.cacheReadTokens || 0);
+              const cache_creation_input_tokens = Number(message.usage.cacheWriteTokens || 0);
+              const usage = { prompt_tokens, completion_tokens, total_tokens: prompt_tokens + completion_tokens };
+              if (cached_tokens > 0) usage.cached_tokens = cached_tokens;
+              if (cache_creation_input_tokens > 0) usage.cache_creation_input_tokens = cache_creation_input_tokens;
+              controller.enqueue(sse(JSON.stringify({ id: `chatcmpl-${crypto.randomUUID()}`, object: "chat.completion.chunk", model, choices: [], usage } })));
             }
             if (message.stopReason !== StopReason.UNSPECIFIED) latestStopReason = message.stopReason;
           }
