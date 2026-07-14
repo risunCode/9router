@@ -1074,67 +1074,54 @@ const PROVIDERS = {
 
   "cursor-cli": {
     config: CURSOR_CLI_CONFIG,
-    flowType: "device_code",
-    /**
-     * Cursor CLI doesn't use a real device code. We encode the PKCE verifier
-     * and poll UUID into a synthetic "device code" so the existing dashboard
-     * polling UI works without changes. The "verification URI" is the
-     * cursor.com login deep-link.
-     */
-    requestDeviceCode: async (config) => {
-      const { verifier: pkceVerifier, challenge: pkceChallenge } = generatePKCE();
+    flowType: "authorization_code_pkce",
+    buildAuthUrl: (config, redirectUri, state, codeChallenge) => {
       const uuid = crypto.randomUUID();
       const params = new URLSearchParams({
-        challenge: pkceChallenge,
+        challenge: codeChallenge,
         uuid,
         mode: "login",
         redirectTarget: "cli",
       });
-      const loginUrl = `${config.loginUrl}?${params.toString()}`;
-      return {
-        device_code: `${uuid}::${pkceVerifier}`,
-        user_code: uuid.slice(0, 8),
-        verification_uri: loginUrl,
-        verification_uri_complete: loginUrl,
-        expires_in: 600,
-        interval: 2,
-      };
+      // Store uuid+verifier needed for polling (attached to state for retrieval later)
+      const url = `${config.loginUrl}?${params.toString()}`;
+      return url;
     },
-    pollToken: async (config, deviceCode) => {
-      const sep = deviceCode.indexOf("::");
-      if (sep < 0) {
-        return { ok: false, data: { error: "invalid_device_code" } };
-      }
-      const uuid = deviceCode.slice(0, sep);
-      const verifier = deviceCode.slice(sep + 2);
-      const res = await fetch(`${config.pollUrl}?uuid=${encodeURIComponent(uuid)}&verifier=${encodeURIComponent(verifier)}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.accessToken) {
-          return {
-            ok: true,
-            data: {
-              access_token: data.accessToken,
-              refresh_token: data.refreshToken || null,
-            },
-          };
+    /**
+     * Override standard PKCE exchange to use Cursor CLI polling instead of
+     * a local redirect callback. codeVerifier doubles as the PKCE verifier.
+     */
+    exchangeToken: async (config, code, redirectUri, codeVerifier, state) => {
+      // Cursor CLI doesn't use a redirect-based code exchange.
+      // We poll the auth endpoint using the PKCE verifier + UUID from state.
+      const searchParams = new URL(redirectUri || "http://localhost", "http://localhost").searchParams;
+      const uuid = searchParams.get("uuid") || state;
+
+      let delay = 1000;
+      for (let attempt = 0; attempt < 150; attempt++) {
+        await new Promise((r) => setTimeout(r, delay));
+        try {
+          const res = await fetch(`${config.pollUrl}?uuid=${uuid}&verifier=${codeVerifier}`);
+          if (res.status === 404) {
+            delay = Math.min(delay * 1.2, 10000);
+            continue;
+          }
+          if (res.ok) {
+            const data = await res.json();
+            if (!data.accessToken) throw new Error("No access token in poll response");
+            return { accessToken: data.accessToken, refreshToken: data.refreshToken };
+          }
+          throw new Error(`Cursor CLI poll failed: HTTP ${res.status}`);
+        } catch (e) {
+          if (e.message?.startsWith("Cursor CLI poll failed")) throw e;
+          if (e.message?.startsWith("No access token")) throw e;
         }
-        return { ok: false, data: { error: "authorization_pending" } };
       }
-      if (res.status === 404) {
-        return { ok: false, data: { error: "authorization_pending" } };
-      }
-      return {
-        ok: false,
-        data: {
-          error: "access_denied",
-          error_description: `Cursor CLI poll returned HTTP ${res.status}`,
-        },
-      };
+      throw new Error("Cursor CLI authentication timeout");
     },
     mapTokens: (tokens) => ({
-      accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token || null,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken || null,
       expiresIn: 86400,
       providerSpecificData: {
         clientVersion: CURSOR_CLI_CONFIG.clientVersion,

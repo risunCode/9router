@@ -159,7 +159,6 @@ export async function GET(request, { params }) {
         "codebuddy-cn",
         "qoder",
         "grok-cli",
-        "cursor-cli",
       ];
       let deviceData;
       if (noPkceDeviceProviders.includes(provider)) {
@@ -280,7 +279,7 @@ export async function POST(request, { params }) {
       }
 
       // Providers that don't use PKCE for device code
-      const noPkceProviders = ["github", "kimi-coding", "kilocode", "codebuddy-cn", "cursor-cli"];
+      const noPkceProviders = ["github", "kimi-coding", "kilocode", "codebuddy-cn"];
       let result;
       if (noPkceProviders.includes(provider)) {
         result = await pollForToken(provider, deviceCode);
