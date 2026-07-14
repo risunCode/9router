@@ -1,0 +1,100 @@
+{
+  "customModels": [
+    {
+      "model": "SWE-Pickle",
+      "displayName": "SWE-Pickle",
+      "provider": "generic-chat-completion-api",
+      "baseUrl": "https://sunta-api.up.railway.app/v1",
+      "apiKey": "YOUR_API_KEY_HERE",
+      "maxOutputTokens": 64000,
+      "noImageSupport": true
+    },
+    {
+      "model": "ChatGPT-Codex",
+      "displayName": "ChatGPT-Codex",
+      "provider": "generic-chat-completion-api",
+      "baseUrl": "https://sunta-api.up.railway.app/v1",
+      "apiKey": "YOUR_API_KEY_HERE",
+      "maxOutputTokens": 64000
+    },
+    {
+      "model": "ChatGPT-OSS",
+      "displayName": "ChatGPT-OSS",
+      "provider": "generic-chat-completion-api",
+      "baseUrl": "https://sunta-api.up.railway.app/v1",
+      "apiKey": "YOUR_API_KEY_HERE",
+      "maxOutputTokens": 64000,
+      "noImageSupport": true
+    },
+    {
+      "model": "Claude-Sonnet",
+      "displayName": "Claude-Sonnet",
+      "provider": "generic-chat-completion-api",
+      "baseUrl": "https://sunta-api.up.railway.app/v1",
+      "apiKey": "YOUR_API_KEY_HERE",
+      "maxOutputTokens": 64000
+    },
+    {
+      "model": "Claude-Opus",
+      "displayName": "Claude-Opus",
+      "provider": "generic-chat-completion-api",
+      "baseUrl": "https://sunta-api.up.railway.app/v1",
+      "apiKey": "YOUR_API_KEY_HERE",
+      "maxOutputTokens": 64000
+    },
+    {
+      "model": "XiaoMi-Mimo",
+      "displayName": "XiaoMi-Mimo",
+      "provider": "generic-chat-completion-api",
+      "baseUrl": "https://sunta-api.up.railway.app/v1",
+      "apiKey": "YOUR_API_KEY_HERE",
+      "maxOutputTokens": 64000
+    },
+    {
+      "model": "Auto",
+      "displayName": "Auto",
+      "provider": "generic-chat-completion-api",
+      "baseUrl": "https://sunta-api.up.railway.app/v1",
+      "apiKey": "YOUR_API_KEY_HERE",
+      "maxOutputTokens": 64000,
+      "noImageSupport": true
+    },
+    {
+      "model": "CLAUDE",
+      "displayName": "CLAUDE",
+      "provider": "generic-chat-completion-api",
+      "baseUrl": "https://sunta-api.up.railway.app/v1",
+      "apiKey": "YOUR_API_KEY_HERE",
+      "maxOutputTokens": 64000
+    },
+    {
+      "model": "MiniMax-M3",
+      "displayName": "MiniMax-M3",
+      "provider": "generic-chat-completion-api",
+      "baseUrl": "https://sunta-api.up.railway.app/v1",
+      "apiKey": "YOUR_API_KEY_HERE",
+      "maxOutputTokens": 64000
+    },
+    {
+      "model": "GeneralLM",
+      "displayName": "GeneralLM",
+      "provider": "generic-chat-completion-api",
+      "baseUrl": "https://sunta-api.up.railway.app/v1",
+      "apiKey": "YOUR_API_KEY_HERE",
+      "maxOutputTokens": 64000,
+      "noImageSupport": true
+    }
+  ],
+  "sessionDefaultSettings": {
+    "defaultModel": "ChatGPT-Codex",
+    "systemPrompt": ""
+  },
+  "missionOrchestratorModel": "SWE-Pickle",
+  "missionOrchestratorReasoningEffort": "high",
+  "compactionModel": "XiaoMi-Mimo",
+  "showThinkingInMainView": true,
+  "showTokenUsageIndicator": true,
+  "toolResultDisplay": "compact",
+  "includeCoAuthoredByDroid": false,
+  "logoAnimation": "off"
+}
