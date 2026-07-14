@@ -90,7 +90,10 @@ export async function handleChat(request, clientRawRequest = null) {
     if (acl.error.retryAfter) response.headers.set("Retry-After", String(acl.error.retryAfter));
     return response;
   }
-  body._apiKeyAcl = acl.context;
+  const aclContext = acl.context;
+  // Strip internal _apiKeyAcl field — Mistral and other strict providers reject it.
+  // Settlement uses aclContext from the closure after the response comes back.
+  delete body._apiKeyAcl;
 
   // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots
   const userAgent = request?.headers?.get("user-agent") || "";

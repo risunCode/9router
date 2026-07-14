@@ -109,6 +109,14 @@ The current generated binding source is the verified `DevinRouter` implementatio
 
 API-key ACL is opt-in. A legacy key without an `apiKeyAcl` row remains active, unrestricted, non-expiring, and quota-unlimited.
 
+### Internal field stripping
+
+The `_apiKeyAcl` field is injected by the SSE handler (`src/sse/handlers/chat.js`) for quota tracking, but **must be stripped from the request body before sending to providers**. Strict providers like Mistral reject unknown fields with HTTP 422.
+
+- `aclContext` is stored in a closure and used for settlement after the response arrives.
+- `delete body._apiKeyAcl` is called before `handleChatCore`.
+- Settlement in `nonStreamingHandler.js` and `streamingHandler.js` uses `aclContext`, not `body._apiKeyAcl`.
+
 ### Policy contract
 
 ```json
