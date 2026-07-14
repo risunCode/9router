@@ -209,8 +209,9 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
 
-        const uuid = data.cursorCliUuid;
-        if (typeof uuid !== "string" || !uuid) throw new Error("Cursor CLI authorize response missing UUID");
+        const loginUrlObj = new URL(data.authUrl);
+        const uuid = loginUrlObj.searchParams.get("uuid");
+        if (!uuid) throw new Error("No UUID in Cursor CLI auth URL");
 
         // Open login page in browser
         window.open(data.authUrl, "_blank", "noopener,noreferrer");

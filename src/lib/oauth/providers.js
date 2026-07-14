@@ -1074,8 +1074,6 @@ const PROVIDERS = {
 
   "cursor-cli": {
     config: CURSOR_CLI_CONFIG,
-    // Cursor CLI's reference client uses a 96-byte verifier (128 base64url chars).
-    pkceVerifierBytes: 96,
     flowType: "cursor_cli_polling",
     buildAuthUrl: (config, redirectUri, state, codeChallenge) => {
       const uuid = crypto.randomUUID();
@@ -1614,10 +1612,6 @@ export async function generateAuthData(providerName, redirectUri, meta) {
     state,
     codeVerifier,
     codeChallenge,
-    // Cursor CLI auth has no callback. Return the opaque server-generated UUID
-    // directly instead of requiring the browser to parse it out of the URL.
-    cursorCliUuid:
-      provider.flowType === "cursor_cli_polling" ? new URL(authUrl).searchParams.get("uuid") : null,
     redirectUri,
     flowType: provider.flowType,
     fixedPort: provider.fixedPort,
