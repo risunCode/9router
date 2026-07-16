@@ -12,8 +12,10 @@ import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
 import { resolveQoderModels } from "open-sse/services/qoderModels.js";
 import { resolveCopilotModels } from "open-sse/services/copilotModels.js";
 import { resolveClinepassModels } from "open-sse/services/clinepassModels.js";
+import { resolveGrokCliModels } from "open-sse/services/grokCliModels.js";
 import { updateProviderCredentials } from "@/sse/services/tokenRefresh";
-import { capabilitiesFromServiceKind } from "open-sse/providers/capabilities.js";
+import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
+import { capabilitiesFromServiceKind, getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
 import { extractApiKey } from "@/sse/services/auth.js";
 import { getSettings } from "@/lib/localDb";
 import { isLocalRequest } from "@/dashboardGuard";
@@ -119,7 +121,30 @@ const LIVE_MODEL_RESOLVERS = {
       apiKey: conn.apiKey,
     });
     return result?.models?.length ? { models: result.models } : null;
-  }
+  },
+  "grok-cli": async (conn) => {
+    const proxy = await resolveConnectionProxyConfig(conn.providerSpecificData || {});
+    const result = await resolveGrokCliModels({
+      ...conn,
+      connectionId: conn.id,
+    }, {
+      log: console,
+      proxyOptions: {
+        connectionProxyEnabled: proxy.connectionProxyEnabled === true,
+        connectionProxyUrl: proxy.connectionProxyUrl || "",
+        connectionNoProxy: proxy.connectionNoProxy || "",
+        vercelRelayUrl: proxy.vercelRelayUrl || "",
+        strictProxy: proxy.strictProxy === true,
+      },
+      onCredentialsRefreshed: async (refreshed) => {
+        await updateProviderCredentials(conn.id, {
+          ...refreshed,
+          existingProviderSpecificData: conn.providerSpecificData || {},
+        });
+      },
+    });
+    return result?.models?.length ? { models: result.models } : null;
+  },
 };
 
 const parseOpenAIStyleModels = (data) => {
@@ -127,8 +152,9 @@ const parseOpenAIStyleModels = (data) => {
   return data?.data || data?.models || data?.results || [];
 };
 
-// Matches provider IDs that are upstream/cross-instance connections (contain a UUID suffix)
-const UPSTREAM_CONNECTION_RE = /[-_][0-9a-f]{8,}$/i;
+// Header sent by fetchCompatibleModelIds to detect cross-instance /models fetches
+// and break recursive loops between 9router instances connected to each other.
+const INTERNAL_MODELS_FETCH_HEADER = "x-9r-internal-models-fetch";
 
 // LLM kind sentinel — combos/models with no explicit kind default to LLM
 const LLM_KIND = "llm";
@@ -141,6 +167,7 @@ const MODEL_TYPE_TO_KIND = {
   embedding: "embedding",
   stt: "stt",
   imageToText: "imageToText",
+  video: "video",
 };
 
 function modelKind(model) {
@@ -193,7 +220,7 @@ async function fetchCompatibleModelIds(connection) {
     const timeoutId = setTimeout(() => controller.abort(), 5000);
     const response = await fetch(url, {
       method: "GET",
-      headers,
+      headers: { ...headers, [INTERNAL_MODELS_FETCH_HEADER]: "1" },
       cache: "no-store",
       signal: controller.signal,
     });
@@ -237,7 +264,11 @@ function comboMatchesKinds(combo, kindFilter) {
  * Build OpenAI-format models list filtered by service kinds.
  * @param {string[]} kindFilter - List of service kinds to include (e.g. ["llm"], ["webSearch","webFetch"]).
  */
-export async function buildModelsList(kindFilter) {
+export async function buildModelsList(kindFilter, options = {}) {
+  // When this header is present, the /v1/models request came from another
+  // 9router instance's fetchCompatibleModelIds — skip dynamic fetch to break
+  // cross-instance recursive loops.
+  const skipDynamicFetch = options.skipDynamicFetch === true;
   let connections = [];
   try {
     connections = await getProviderConnections();
@@ -367,7 +398,7 @@ export async function buildModelsList(kindFilter) {
           )
         : providerModels.map((model) => model.id);
 
-      if (isCompatibleProvider && rawModelIds.length === 0 && !UPSTREAM_CONNECTION_RE.test(providerId)) {
+      if (isCompatibleProvider && rawModelIds.length === 0 && !skipDynamicFetch) {
         rawModelIds = await fetchCompatibleModelIds(conn);
       }
 
@@ -470,7 +501,13 @@ export async function buildModelsList(kindFilter) {
           object: "model",
           owned_by: outputAlias,
         };
-        const caps = liveCapabilitiesById.get(modelId) || capabilitiesFromServiceKind(customKind || liveKind);
+        // Live-catalog resolvers (kiro/qoder/github/clinepass) mostly only return
+        // { id, name } — no per-model capability data. Fall back to the same
+        // pattern-matched capabilities the dashboard uses (useModelCaps.js) so
+        // dynamically-discovered LLM models still surface vision/reasoning/search/tools.
+        const caps = liveCapabilitiesById.get(modelId)
+          || capabilitiesFromServiceKind(customKind || liveKind)
+          || (kind === LLM_KIND ? getCapabilitiesForModel(providerId, modelId) : null);
         if (caps) {
           model.capabilities = caps;
         } else if (staticModel) {
@@ -533,7 +570,9 @@ export async function GET(request) {
     const auth = await resolveModelsApiKeyPolicy(request);
     if (auth.response) return auth.response;
 
-    const data = await buildModelsList([LLM_KIND]);
+    // Detect cross-instance recursive /models fetch (another 9router fetching our /models)
+    const skipDynamicFetch = request?.headers?.get(INTERNAL_MODELS_FETCH_HEADER) === "1";
+    const data = await buildModelsList([LLM_KIND], { skipDynamicFetch });
     return Response.json({ object: "list", data: filterModelCatalog(data, auth.policy) }, {
       headers: CORS_HEADERS,
     });
